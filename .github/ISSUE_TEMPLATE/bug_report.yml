@@ -40,6 +40,23 @@ body:
         - Other / not sure
     validations:
       required: true
+  - type: dropdown
+    id: initramfs
+    attributes:
+      label: What builds the initramfs
+      options:
+        - mkinitcpio
+        - dracut
+        - booster
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: shell
+    attributes:
+      label: Login shell
+      description: "Output of `getent passwd $USER | cut -d: -f7`"
+      placeholder: /usr/bin/fish
   - type: checkboxes
     id: setup
     attributes:

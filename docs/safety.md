@@ -31,6 +31,7 @@ With autologin, **the lock screen is your only password**. What protects your da
 - **Removing the lock or the autostart while autologin stays on** is refused: remove autologin first.
 - **If Hyprland can't start,** the autostart ends the session instead of leaving a logged-in shell open.
 - **`uninstall` removes autologin first,** so the machine is never left logging in without the lock.
+- **A failed boot image rebuild stops everything.** If `mkinitcpio -P` or `grub-mkconfig` fails, the script says so and tells you not to reboot, instead of reporting success. The next run retries the rebuild.
 - **With Secure Boot on,** every rebuilt boot image is checked with `sbctl verify`. An unsigned image won't boot, so the script tells you not to reboot.
 
 ## When `tpm-unlock` refuses
@@ -42,6 +43,7 @@ It refuses whenever automatic unlock would quietly make the encryption useless:
 | Secure Boot off | **Refuses** | Anyone could boot their own system and ask the TPM for the key |
 | Old `encrypt` mkinitcpio hook | **Refuses** | It can't use the TPM. Switch to the systemd hooks (`systemd … sd-vconsole … sd-encrypt`) first |
 | Disk is not LUKS2 | **Refuses** | TPM enrolment needs LUKS2 |
+| Initramfs built by dracut or booster | **Refuses** | The script only knows how to set up mkinitcpio's `sd-encrypt` |
 | No TPM 2.0 chip, or no encryption | Does nothing | Not possible, or nothing to unlock |
 | Secure Boot with only factory keys | **Asks first** | Another Microsoft-signed Linux (a live USB) could boot and get the key. Use your own keys (`sbctl`) |
 | Boot image is not a signed UKI | **Asks first** | The initramfs isn't covered by Secure Boot, so someone could replace it and read the key when the TPM releases it |

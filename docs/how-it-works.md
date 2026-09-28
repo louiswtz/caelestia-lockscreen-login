@@ -79,6 +79,8 @@ The script detects the boot setup and edits the right place:
 | **systemd-boot** entries | `bootctl -p` + `loader/entries/*.conf` | each entry's `options` line | nothing needed |
 
 - **Hook or `crypttab` changes** always rebuild the initramfs (`mkinitcpio -P`).
+- **If a rebuild fails** (`mkinitcpio -P` or `grub-mkconfig`), the script stops and says **not** to reboot: the settings changed, but the boot image doesn't match them yet. The failure is recorded (`/var/lib/caelestia-lockscreen-login/rebuild-pending`), so the next run of any boot component retries the rebuild, and `doctor` flags it. See [troubleshooting](troubleshooting.md#mkinitcpio--p-failed).
+- **mkinitcpio only:** on a dracut or booster system, the components that need an initramfs rebuild refuse and change nothing. The script never installs mkinitcpio next to them.
 - **On any other setup,** the boot components change nothing and print the options to add by hand.
 - **With Secure Boot on,** after rebuilding a UKI the script runs `sbctl verify`. If a boot file isn't signed, it tells you **not** to reboot, and how to sign it.
 
@@ -89,7 +91,7 @@ The script detects the boot setup and edits the right place:
 - **Each original value is recorded** in `/var/lib/caelestia-lockscreen-login/state`, one line per changed setting.
 - **Undo puts the originals back, then deletes the `.bak` files** that became identical again, and forgets the record.
 - **Undo never removes a disk recovery key.** You may have written it down, and it keeps working.
-- **If `splash` installed Plymouth,** undo uninstalls it (after removing the hook and rebuilding).
+- **Packages the script installed are removed by undo:** Plymouth for `splash` (after removing the hook and rebuilding), `tpm2-tss` for `tpm-unlock` (unless another package needs it).
 
 What undo does for each setting:
 
@@ -107,7 +109,9 @@ What undo does for each setting:
   2. asks about each optional extra (`silent-boot`, `splash`, `tpm-unlock`), with an explanation, defaulting to no. Components already set up are skipped,
   3. shows the plan, and the boot warning if a boot component is in it,
   4. asks "Apply?",
-  5. applies the components in order. If an optional one refuses, it reports it and goes on.
+  5. applies the components in order. If an optional one refuses, it reports it and goes on. If a boot image rebuild fails, it stops there and says not to reboot.
+  6. right before autologin, checks that the lock and the autostart really got set up, and refuses autologin otherwise.
 - **`uninstall`:**
   1. asks once about the core (all three together), then about each **installed** extra,
-  2. removes autologin **first**, so the machine is never left logging in without the lock.
+  2. removes autologin **first**, so the machine is never left logging in without the lock,
+  3. like `install`, stops if a boot image rebuild fails.

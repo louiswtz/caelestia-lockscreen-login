@@ -17,7 +17,7 @@ Each test builds a machine in a temporary folder:
 
 - **a fake root:** the script's `LSL_ROOT` variable is put in front of every system path it uses (`/etc`, `/boot`, `/var`, `/sys`, `/proc`), with a realistic `mkinitcpio.conf`, `crypttab.initramfs`, `loader.conf`, TPM, watchdog…
 - **a fake home:** with a caelestia `hypr-user.lua`,
-- **stub versions of every system tool:** `sudo`, `bootctl`, `sbctl`, `cryptsetup`, `systemd-cryptenroll`, `pacman`, `mkinitcpio`, `grub-mkconfig`, `systemctl`, `journalctl`, `hyprctl`, `caelestia`, `getent`, `findmnt`, `lsblk`. They answer like the real ones, keep their state inside the fake root (key slots, installed packages, Secure Boot on/off), and log every call that would change something.
+- **stub versions of every system tool:** `sudo`, `bootctl`, `sbctl`, `cryptsetup`, `systemd-cryptenroll`, `pacman`, `mkinitcpio` (which can be made to fail), `grub-mkconfig`, `systemctl`, `journalctl`, `hyprctl`, `caelestia`, `getent` (whose login shell a test can change), `findmnt`, `lsblk`, and `dracut` when a test needs it. They answer like the real ones, keep their state inside the fake root (key slots, installed packages, Secure Boot on/off), and log every call that would change something.
 - **a tripwire:** the stub `sudo` refuses, and fails the run, if the script ever passes it a real system path.
 
 A machine is compared before and after with a **snapshot**: every file, folder and link, with its permissions and a hash of its content.
@@ -26,9 +26,9 @@ A machine is compared before and after with a **snapshot**: every file, folder a
 
 | File | Checks |
 |---|---|
-| `tests/components.sh` | Every component on a UKI machine, plus `silent-boot`, `splash` and `tpm-unlock` on GRUB and systemd-boot machines. For each: `--dry-run` changes nothing and runs no system command; it applies correctly; applying it again changes nothing; `--undo --dry-run` changes nothing; `--undo` restores the machine **byte for byte**. Also: silent-boot and splash undone in either order, recovery key and `--reenroll` |
-| `tests/safety.sh` | The autologin questions, the lock/autostart removal warnings, the boot warning answered "no", every refusal, undo of setups made by hand |
-| `tests/install.sh` | `install` and `uninstall` (with `--dry-run`, all yes, only Enter, the core always set up), a full install then uninstall back to the exact original, the read-only commands, and `--help` |
+| `tests/components.sh` | Every component on a UKI machine, plus `silent-boot`, `splash` and `tpm-unlock` on GRUB and systemd-boot machines. For each: `--dry-run` changes nothing and runs no system command; it applies correctly; applying it again changes nothing; `--undo --dry-run` changes nothing; `--undo` restores the machine **byte for byte**. Also: the autostart with bash (each login file) and zsh, and after a `chsh`; silent-boot and splash undone in either order; recovery key and `--reenroll`; `tpm2-tss` installed and removed |
+| `tests/safety.sh` | Autologin setting up the lock and autostart first, or refused (unsupported shell); the lock/autostart removal refusals; the boot warning answered "no"; a failing `mkinitcpio` (stops, says not to reboot, retried next run); dracut refusals; every other refusal; undo of setups made by hand |
+| `tests/install.sh` | `install` and `uninstall` (with `--dry-run`, all yes, only Enter, the core always set up, an unencrypted disk answered "no"), a full install then uninstall back to the exact original, the read-only commands, and `--help` |
 
 The last check of every run makes sure no real system path was touched anywhere.
 
