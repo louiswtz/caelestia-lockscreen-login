@@ -26,7 +26,7 @@ power on → (TPM unlocks the disk) → autologin on tty1 → Hyprland → caele
   - keep a **bootable Arch USB stick** at hand to repair things,
   - **back up** anything you care about,
   - always run the component with **`--dry-run` first** and read what it will change.
-- **It has been tested on fake machines** ([testing](docs/testing.md)) and used for real on **one** laptop only. Your setup may differ in ways it doesn't handle.
+- **It has been tested on fake machines** ([testing](docs/testing.md)) and used for real on only **two** machines. Your setup may differ in ways it doesn't handle.
 - It is provided **as is, without any warranty**. You are responsible for what it does to your system.
 
 > **This only makes sense with full-disk encryption.** With autologin, the lock screen is the only thing between the power button and your session. Without encryption, anyone holding the machine can boot a USB stick or pull the disk and read your files. The script warns you and asks again in that case. See [safety](docs/safety.md).
@@ -137,7 +137,7 @@ caelestia-lockscreen-login.sh <component> [options]
 - **Login shells:** fish, bash and zsh. With another one, `install` refuses: there'd be no autostart to go with autologin.
 - **The caelestia shell only:** the lock is triggered with `caelestia shell lock lock`.
 - **Some formatting may change on edit.** Rewriting a systemd-boot `options` line normalizes its spacing, and GRUB's value is rewritten with double quotes. With a record, undo still restores the original value, but the `.bak` may be kept if the file doesn't come back byte-identical.
-- **Real-world testing is limited.** The logic is covered by the test suite, but the script has been used for real on only one machine (a UKI + Secure Boot + TPM laptop). Use `--dry-run` first.
+- **Real-world testing is limited.** The logic is covered by the test suite, but the script has been used for real on only two machines: a UKI + Secure Boot + TPM laptop with fish, and a second PC with bash. The second one turned up bugs (bash autostart, mkinitcpio failures) that are now fixed and covered by tests. Use `--dry-run` first.
 
 ## License
 
