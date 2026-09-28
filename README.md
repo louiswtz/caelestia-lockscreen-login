@@ -128,6 +128,7 @@ caelestia-lockscreen-login.sh <component> [options]
 | [Safety](docs/safety.md) | The security model, what TPM + Secure Boot protect against, the safety checks, when `tpm-unlock` refuses |
 | [Troubleshooting](docs/troubleshooting.md) | Lock screen not appearing, disk asking for its passphrase, machine not booting, rescue USB stick |
 | [Testing](docs/testing.md) | The fake-machine test suite: how to run it, what it checks, how to add a test |
+| [Contributing](.github/CONTRIBUTING.md) | Reporting bugs, proposing changes. Security problems: [private reporting](.github/SECURITY.md) |
 
 ## Limitations
 

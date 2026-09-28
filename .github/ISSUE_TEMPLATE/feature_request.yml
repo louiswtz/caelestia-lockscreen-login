@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement or support for another setup
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What should it do, and what problem does it solve for you?
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Distribution, boot setup (UKI, GRUB, systemd-boot…), shell, anything relevant.

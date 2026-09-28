@@ -1,0 +1,56 @@
+name: Bug report
+description: Something doesn't work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Security problems** (e.g. something reachable before the lock screen) go through
+        private reporting instead: Security tab → "Report a vulnerability".
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The exact command you ran and its full output. If it changes something, run it again with `--dry-run`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `./caelestia-lockscreen-login.sh doctor`
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: boot
+    attributes:
+      label: Boot setup
+      options:
+        - mkinitcpio UKI (/etc/kernel/cmdline)
+        - systemd-boot entries (no UKI)
+        - GRUB
+        - Other / not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: setup
+    attributes:
+      label: Your machine
+      options:
+        - label: The disk is encrypted (LUKS)
+        - label: Secure Boot is on
+        - label: TPM unlock (`tpm-unlock`) is set up
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release or commit you are using
+      placeholder: v0.1.0
