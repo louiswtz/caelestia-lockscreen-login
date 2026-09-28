@@ -13,7 +13,7 @@
 #                Secure Boot (PCR 7); refuses where that would be unsafe
 #
 # Usage:
-#   caelestia-lockscreen-login.sh install   [--dry-run]    asks about every component
+#   caelestia-lockscreen-login.sh install   [--dry-run]    the core (lock, autostart, autologin) + chosen extras
 #   caelestia-lockscreen-login.sh uninstall [--dry-run]    asks about every installed one
 #   caelestia-lockscreen-login.sh status                   quick overview
 #   caelestia-lockscreen-login.sh doctor                   full read-only checkup
@@ -55,6 +55,7 @@ GRUB_DEFAULT=$R/etc/default/grub
 GRUB_CFG=$R/boot/grub/grub.cfg
 STATE_DIR=$R/var/lib/caelestia-lockscreen-login
 STATE_FILE=$STATE_DIR/state
+REBUILD_MARK=$STATE_DIR/rebuild-pending   # a failed rebuild, retried by the next run
 SBCTL_KEYS=("$R/var/lib/sbctl/keys/db/db.key" "$R/usr/share/secureboot/keys/db/db.key")
 
 BEGIN_MARK='-- >>> caelestia-lockscreen-login >>>'
@@ -68,6 +69,7 @@ DRY_RUN=0            # --dry-run
 CHANGED=0            # set by put_file/remove_file when they change something
 NEED_INITRAMFS=0     # set by edits that need "mkinitcpio -P"
 NEED_GRUB=0          # set by edits that need "grub-mkconfig"
+REBUILD_FAILED=0     # set when mkinitcpio / grub-mkconfig failed: stop, don't reboot
 COMING=""            # components install is about to add (for the safety checks)
 GOING=""             # components uninstall is about to remove
 
@@ -204,6 +206,26 @@ esp() {               # EFI system partition mount point, if systemd-boot knows 
     local p; p=$(sudo bootctl -p 2>/dev/null || true)
     [[ -n $p ]] && echo "$R$p"
     return 0
+}
+
+pkg_needed() { [[ $(pacman -Qi "$1" 2>/dev/null | sed -n 's/^Required By *: *//p') != None ]]; }
+
+initramfs_tool() {    # what builds the initramfs: mkinitcpio | dracut | booster | none
+    local t
+    if [[ -f $MKINITCPIO_CONF ]] && command -v mkinitcpio >/dev/null; then echo mkinitcpio; return 0; fi
+    for t in dracut booster; do command -v "$t" >/dev/null && { echo "$t"; return 0; }; done
+    echo none
+}
+
+need_mkinitcpio() {   # 1 (with the reason) if the initramfs isn't built by mkinitcpio
+    local t; t=$(initramfs_tool)
+    [[ $t == mkinitcpio ]] && return 0
+    if [[ $t == none ]]; then warn "mkinitcpio not found: nothing changed"
+    else
+        warn "this system builds its initramfs with $t, not mkinitcpio: not supported, nothing changed."
+        warn "(installing mkinitcpio next to $t could leave the machine unbootable, so the script doesn't)"
+    fi
+    return 1
 }
 
 mkinitcpio_hooks_line() { grep -m1 -E '^[[:space:]]*HOOKS=' "$MKINITCPIO_CONF" 2>/dev/null || true; }
@@ -499,14 +521,56 @@ check_signed() {    # with Secure Boot on, a rebuilt UKI must be signed or it wo
     fi
 }
 
-rebuild_boot() {    # rebuild whatever reads the settings changed so far
-    local m; m=$(boot_method)
-    if ((NEED_INITRAMFS)); then act "rebuild the initramfs / boot image (mkinitcpio -P)" sudo mkinitcpio -P; fi
-    if ((NEED_GRUB)) || { ((NEED_INITRAMFS)) && [[ $m == grub ]]; }; then
-        act "regenerate $GRUB_CFG" sudo grub-mkconfig -o "$GRUB_CFG"
+rebuild_failed() {  # "command" what...: the settings changed but the boot image wasn't rebuilt
+    local cmd=$1 e; shift
+    REBUILD_FAILED=1
+    sudo install -d -m 755 "$STATE_DIR"
+    printf '%s\n' "$@" | sudo tee "$REBUILD_MARK" >/dev/null   # initramfs and/or grub
+    warn "'$cmd' FAILED (its errors are above). Do NOT reboot until it succeeds:"
+    warn "the settings were changed, but the boot image was not rebuilt with them."
+    warn "Fix the error, then run the same command of this script again (it retries the rebuild),"
+    warn "or: sudo $cmd"
+    if [[ $cmd == mkinitcpio* ]]; then
+        e=$(esp); [[ -n $e ]] && warn "A full EFI partition is a common cause, check with: df -h $e"
     fi
-    if ((NEED_INITRAMFS)) && [[ $m == uki ]]; then check_signed; fi
+    return 0
+}
+
+rebuild_pending() { sudo test -f "$REBUILD_MARK"; }
+
+rebuild_boot() {    # rebuild whatever reads the settings changed so far; 1 if that failed
+    local m; m=$(boot_method)
+    local initramfs=$NEED_INITRAMFS grub=$NEED_GRUB
     NEED_INITRAMFS=0 NEED_GRUB=0
+    if rebuild_pending; then   # a previous run failed to rebuild: do it now
+        sudo grep -qx initramfs "$REBUILD_MARK" && initramfs=1
+        sudo grep -qx grub "$REBUILD_MARK" && grub=1
+        info "the last boot image rebuild failed: retrying it"
+    fi
+    if ((initramfs)) && [[ $m == grub ]]; then grub=1; fi   # grub.cfg lists the initramfs too
+    ((initramfs || grub)) || return 0
+    if ((DRY_RUN)); then
+        if ((initramfs)); then info "[dry-run] would rebuild the initramfs / boot image (mkinitcpio -P)"; fi
+        if ((grub)); then info "[dry-run] would regenerate $GRUB_CFG"; fi
+        return 0
+    fi
+    if ((initramfs)); then
+        say "Rebuilding the initramfs / boot image (mkinitcpio -P)"
+        if ! sudo mkinitcpio -P; then
+            if ((grub)); then rebuild_failed "mkinitcpio -P" initramfs grub; else rebuild_failed "mkinitcpio -P" initramfs; fi
+            return 1
+        fi
+        info "rebuilt (\"WARNING: Possibly missing firmware\" lines above are normal and harmless)"
+    fi
+    if ((grub)); then
+        sudo grub-mkconfig -o "$GRUB_CFG" || { rebuild_failed "grub-mkconfig -o $GRUB_CFG" grub; return 1; }
+        info "regenerated $GRUB_CFG"
+    fi
+    if rebuild_pending; then
+        sudo rm -f "$REBUILD_MARK"; sudo rmdir --ignore-fail-on-non-empty "$STATE_DIR"
+    fi
+    if ((initramfs)) && [[ $m == uki ]]; then check_signed; fi
+    return 0
 }
 
 reload_hyprland() {
@@ -661,14 +725,16 @@ autostart_undo() {
 
 autologin_installed() { [[ -f $GETTY_CONF ]]; }
 
-autologin_safe() {   # 1 if refused (no lock or no autostart) or the user backs out
-    if ! lock_installed && [[ " $COMING " != *" lock "* ]]; then
-        warn "   refused: without the startup lock, anyone who powers on gets your unlocked desktop."
-        warn "   set it up first ($PROG lock)"; return 1
-    fi
-    if ! autostart_installed && [[ " $COMING " != *" autostart "* ]]; then
-        warn "   refused: without the autostart, anyone who powers on gets a logged-in terminal."
-        warn "   set it up first ($PROG autostart)"; return 1
+autologin_needs() {  # what autologin needs that is neither set up nor coming
+    lock_installed || [[ " $COMING " == *" lock "* ]] || echo lock
+    autostart_installed || [[ " $COMING " == *" autostart "* ]] || echo autostart
+}
+
+autologin_safe() {   # 1 if it can't be made safe, or the user backs out
+    if [[ -z $(autostart_file) ]]; then
+        warn "   refused: the autostart doesn't support your login shell ($(login_shell_name); fish, bash"
+        warn "   or zsh are), so anyone who powers on would get a logged-in terminal."
+        return 1
     fi
     if ! root_encrypted; then
         warn "   the disk is NOT encrypted: anyone with this machine can remove the disk"
@@ -678,12 +744,18 @@ autologin_safe() {   # 1 if refused (no lock or no autostart) or the user backs 
     return 0
 }
 
-autologin_apply() {  # "checked": install already asked the safety questions
+autologin_apply() {  # "checked": install already asked the questions and added what it needs
+    local c
     say "Autologin on tty1"
     if [[ ${1:-} != checked ]]; then
         autologin_safe || { info "nothing changed"; return 1; }
-    elif ! ((DRY_RUN)) && ! { lock_installed && autostart_installed; }; then
-        # install asked already, but the lock or the autostart may have failed since
+        for c in $(autologin_needs); do   # without them, powering on gives anyone your session
+            info "autologin needs the $c component: setting it up first"
+            "${c}_apply" || { warn "$c could not be set up: autologin refused"; return 1; }
+            COMING+=" $c "; say "Autologin on tty1"
+        done
+    fi
+    if ! ((DRY_RUN)) && ! { lock_installed && autostart_installed; }; then
         warn "the startup lock or the autostart is not set up: autologin refused, nothing changed"; return 1
     fi
     CHANGED=0
@@ -727,6 +799,7 @@ silent_apply() {
         warn "unrecognized boot setup: nothing changed. Add these kernel options yourself:"
         warn "  ${flags[*]}"; return 1
     fi
+    if [[ $m == uki ]]; then need_mkinitcpio || return 1; fi
     boot_warning || { info "nothing changed"; return 0; }
     for key in $(cmdline_keys "$m"); do
         apply_setting silent "$key" "$(merge_cmdline "$(get_setting "$key")" "${flags[@]}")"
@@ -742,7 +815,7 @@ silent_undo() {
     [[ $m != unknown ]] || { warn "unrecognized boot setup: nothing changed"; return 1; }
     boot_warning || { info "nothing changed"; return 0; }
     for key in $(cmdline_keys "$m") $(loader_key); do undo_setting silent "$key" silent_fallback; done
-    rebuild_boot
+    rebuild_boot || return 1
     state_drop silent
 }
 
@@ -757,8 +830,8 @@ splash_fallback() {    # key value: remove what splash adds
 splash_apply() {
     local m line key
     say "Boot splash (Plymouth)"
-    command -v pacman >/dev/null && [[ -f $MKINITCPIO_CONF ]] \
-        || { warn "needs pacman and mkinitcpio (Arch): nothing changed"; return 1; }
+    command -v pacman >/dev/null || { warn "needs pacman (Arch): nothing changed"; return 1; }
+    need_mkinitcpio || return 1
     line=$(mkinitcpio_hooks_line)
     [[ -n $line ]] || { warn "no HOOKS=(...) line in $MKINITCPIO_CONF: nothing changed"; return 1; }
     if hooks_in_conf_d; then warn "HOOKS is set in $MKINITCPIO_CONF_D: edit it there yourself, nothing changed"; return 1; fi
@@ -776,7 +849,7 @@ splash_apply() {
     for key in $(cmdline_keys "$m"); do
         apply_setting splash "$key" "$(merge_cmdline "$(get_setting "$key")" splash)"
     done
-    rebuild_boot
+    rebuild_boot || return 1
     ((DRY_RUN)) || info "theme: the default shows the firmware logo (others: plymouth-set-default-theme -l)"
 }
 
@@ -787,7 +860,7 @@ splash_undo() {
     undo_setting splash hooks splash_fallback
     if [[ $m == unknown ]]; then warn "unrecognized boot setup: remove the 'splash' kernel option yourself"
     else for key in $(cmdline_keys "$m"); do undo_setting splash "$key" splash_fallback; done; fi
-    rebuild_boot     # before removing the package: the old hook would need it
+    rebuild_boot || return 1   # before removing the package: the old hook would need it
     if [[ -n $(state_get splash package) ]] && pacman -Q plymouth >/dev/null 2>&1; then
         act "uninstall plymouth (installed by this script)" sudo pacman -Rns --noconfirm plymouth
     fi
@@ -818,6 +891,7 @@ tpm_apply() {        # apply | reenroll
         return 0
     fi
 
+    need_mkinitcpio || return 1
     # refuse whenever auto-unlock would quietly defeat the encryption
     if initrd_uses encrypt && ! initrd_uses sd-encrypt; then
         warn "the initramfs uses the old 'encrypt' hook, which can't use the TPM. Switch to the"
@@ -844,6 +918,11 @@ tpm_apply() {        # apply | reenroll
 
     info "disk: $dev (unlocked as /dev/mapper/$name), TPM 2.0 present, Secure Boot on"
     boot_warning || { info "nothing changed"; return 0; }
+    if ! pacman -Q tpm2-tss >/dev/null 2>&1; then   # systemd needs it to use the TPM
+        act "install tpm2-tss (systemd needs it to use the TPM)" sudo pacman -S --needed --noconfirm tpm2-tss
+        state_set tpm package absent installed
+        NEED_INITRAMFS=1   # sd-encrypt adds the TPM libraries to the initramfs only once installed
+    fi
     if ! grep -qx recovery <<<"$slots"; then
         if ask "   Create a recovery key first? Strongly recommended" Y; then
             info "WRITE IT DOWN (on paper, away from the machine): it is shown only once."
@@ -864,7 +943,7 @@ tpm_apply() {        # apply | reenroll
         info "no crypttab.initramfs entry for $name: systemd tries the TPM key on its own"
         info "(if the disk still asks, add 'rd.luks.options=tpm2-device=auto' to the kernel options)"
     fi
-    rebuild_boot
+    rebuild_boot || return 1
     if ! ((DRY_RUN)); then
         info "Reboot: the disk should unlock without asking."
         info "Test it once: with Secure Boot off, the disk MUST ask for the passphrase."
@@ -889,7 +968,11 @@ tpm_undo() {
     if [[ -n $(get_setting "crypttab:$name" 2>/dev/null || true) ]]; then
         undo_setting tpm "crypttab:$name" tpm_fallback
     fi
-    rebuild_boot
+    rebuild_boot || return 1
+    if [[ -n $(state_get tpm package) ]] && pacman -Q tpm2-tss >/dev/null 2>&1; then
+        if pkg_needed tpm2-tss; then info "tpm2-tss kept: other packages need it"
+        else act "uninstall tpm2-tss (installed by this script)" sudo pacman -Rns --noconfirm tpm2-tss; fi
+    fi
     state_drop tpm
 }
 
@@ -902,9 +985,24 @@ cmd_install() {
     local c; local -a chosen=()
     command -v start-hyprland >/dev/null && command -v caelestia >/dev/null && [[ -f $HYPR_USER ]] \
         || die "needs Hyprland + caelestia, and $HYPR_USER (start Hyprland once): nothing changed"
+    [[ -n $(autostart_file) ]] || die "your login shell ($(login_shell_name)) is not supported by the autostart:
+   use fish, bash or zsh (e.g. chsh -s /usr/bin/bash). Nothing changed."
     sudo -v || die "sudo is needed to read and change the system settings"
 
-    say "Choose what to set up (Enter = the capital letter)"
+    say "Core: the caelestia lock screen as your login screen (always set up)"
+    info "- Startup lock: Hyprland starts with every shortcut disabled and locks itself"
+    info "  as soon as the caelestia shell is ready, so the lock screen is your login."
+    info "- Autostart: logging in on tty1 starts Hyprland ($(login_shell_name)), with its output"
+    info "  hidden. Closing Hyprland logs you out."
+    info "- Autologin: tty1 logs you in by itself, with no login text on screen."
+    for c in lock autostart autologin; do
+        if "${c}_installed"; then info "$c: already set up"; else chosen+=("$c"); COMING+=" $c "; fi
+    done
+    if [[ " $COMING " == *" autologin "* ]]; then
+        autologin_safe || die "the core needs autologin: nothing changed (components can still be set up one by one, see --help)"
+    fi
+
+    echo; say "Optional extras (Enter = the capital letter)"
     # pick component "explanation" default: already set up -> just say so
     pick() {
         echo; printf '%s\n' "$2"
@@ -914,24 +1012,12 @@ cmd_install() {
     tpm_installed()    { tpm_enrolled; }
     silent_installed() { silent_configured; }
 
-    pick lock "1. Startup lock: Hyprland starts with every shortcut disabled and locks itself
-   as soon as the caelestia shell is ready, so the lock screen is your login." Y
-    if [[ -n $(autostart_file) ]]; then
-        pick autostart "2. Autostart: logging in on tty1 starts Hyprland ($(login_shell_name)), with its
-   output hidden. Closing Hyprland logs you out." Y
-    else
-        echo; echo "2. Autostart"
-        warn "   login shell $(login_shell_name) is not supported (fish, bash or zsh): skipped, so autologin is refused too"
-    fi
-    echo; echo "3. Autologin: tty1 logs you in by itself, with no login text on screen."
-    if autologin_installed; then info "already set up"
-    elif ask "   Set it up?" Y && autologin_safe; then chosen+=(autologin); COMING+=" autologin "; fi
-    pick silent-boot "4. Silent boot: no text on screen at boot and shutdown (quiet kernel options,
+    pick silent-boot "1. Silent boot: no text on screen at boot and shutdown (quiet kernel options,
    hardware watchdog off, boot menu hidden: hold Space to see it)." N
-    pick splash "5. Boot splash (Plymouth): a graphical screen while booting, and a graphical
+    pick splash "2. Boot splash (Plymouth): a graphical screen while booting, and a graphical
    disk password prompt when one is needed. Slightly slower boot." N
     if root_encrypted && has_tpm2; then
-        pick tpm-unlock "6. TPM unlock: the TPM 2.0 chip unlocks the encrypted disk at boot, so the
+        pick tpm-unlock "3. TPM unlock: the TPM 2.0 chip unlocks the encrypted disk at boot, so the
    lock screen is your only password. Needs Secure Boot on (checked first)." N
     fi
 
@@ -943,6 +1029,7 @@ cmd_install() {
     else ask "Apply?" Y || { info "nothing changed"; return 0; }; CONFIRMED=1; fi
 
     for c in "${chosen[@]}"; do   # an optional step may refuse: report it and go on
+        ((REBUILD_FAILED)) && { warn "stopped: not setting up ${c} and the rest (the boot image failed to rebuild)"; break; }
         case $c in
             autologin) autologin_apply checked || warn "autologin was not set up (see above)" ;;
             tpm-unlock) tpm_apply apply || warn "tpm-unlock was not set up (see above)" ;;
@@ -950,6 +1037,7 @@ cmd_install() {
         esac
     done
     if ((DRY_RUN)); then say "Dry run finished: nothing was changed."; return 0; fi
+    if ((REBUILD_FAILED)); then warn "NOT done: the boot image failed to rebuild, see above. Do not reboot yet."; return 1; fi
     say "Done. Takes effect at the next boot."
     if [[ " ${chosen[*]} " == *" lock "* ]]; then
         info "If the lock screen ever fails to appear, shortcuts stay disabled:"
@@ -961,12 +1049,14 @@ cmd_uninstall() {
     local c; local -a chosen=()
     sudo -v || die "sudo is needed to read and change the system settings"
     say "Choose what to remove (Enter = the capital letter)"
-    # autologin first, so the machine is never left logging in unprotected
-    if autologin_installed && ask "Remove autologin (tty1 asks for your password again)?" Y; then
-        chosen+=(autologin); GOING+=" autologin "
+    if autologin_installed || autostart_anywhere || lock_installed || lua_has_legacy_block; then
+        if ask "Remove the core: autologin, autostart and startup lock (tty1 asks for your password again)?" Y; then
+            # autologin first, so the machine is never left logging in unprotected
+            if autologin_installed; then chosen+=(autologin); GOING+=" autologin "; fi
+            if autostart_anywhere; then chosen+=(autostart); fi
+            if lock_installed || lua_has_legacy_block; then chosen+=(lock); fi
+        fi
     fi
-    if autostart_anywhere && ask "Remove the autostart (you type start-hyprland yourself)?" Y; then chosen+=(autostart); fi
-    if lock_installed && ask "Remove the startup lock?" Y; then chosen+=(lock); fi
     if silent_configured && ask "Undo the silent boot (boot and shutdown text shown again)?" N; then chosen+=(silent-boot); fi
     if splash_installed && ask "Remove the boot splash (Plymouth)?" N; then chosen+=(splash); fi
     if root_encrypted && has_tpm2 && tpm_enrolled \
@@ -977,8 +1067,13 @@ cmd_uninstall() {
     if [[ " ${chosen[*]} " =~ \ (silent-boot|splash|tpm-unlock)\  ]]; then warn "$BOOT_WARNING"; fi
     if ((DRY_RUN)); then info "(dry run: only showing what would change)"
     else ask "Apply?" Y || { info "nothing changed"; return 0; }; CONFIRMED=1; fi
-    for c in "${chosen[@]}"; do "$(comp_fn "$c")_undo" || warn "$c was not fully removed (see above)"; done
-    if ((DRY_RUN)); then say "Dry run finished: nothing was changed."; else say "Done. Takes effect at the next boot."; fi
+    for c in "${chosen[@]}"; do
+        ((REBUILD_FAILED)) && { warn "stopped: not removing ${c} and the rest (the boot image failed to rebuild)"; break; }
+        "$(comp_fn "$c")_undo" || warn "$c was not fully removed (see above)"
+    done
+    if ((DRY_RUN)); then say "Dry run finished: nothing was changed."
+    elif ((REBUILD_FAILED)); then warn "NOT done: the boot image failed to rebuild, see above. Do not reboot yet."; return 1
+    else say "Done. Takes effect at the next boot."; fi
 }
 
 cmd_status() {
@@ -1031,6 +1126,7 @@ cmd_doctor() {
         else note "no recovery key (make one: sudo systemd-cryptenroll $dev --recovery-key)"; fi
         if grep -qx tpm2 <<<"$slots"; then
             ok "TPM unlock is set up"
+            pacman -Q tpm2-tss >/dev/null 2>&1 || bad "tpm2-tss is not installed: systemd can't use the TPM key ($PROG tpm-unlock --reenroll)"
             secure_boot_on || bad "TPM unlock is set up but Secure Boot is OFF: anyone can get the key (turn it on, or: $PROG tpm-unlock --undo)"
             if [[ -f $CRYPTTAB_INITRAMFS ]] && ! sudo grep -q 'tpm2-device=' "$CRYPTTAB_INITRAMFS"; then
                 note "crypttab.initramfs has no tpm2-device=auto (the TPM key may be ignored)"
@@ -1054,6 +1150,7 @@ cmd_doctor() {
     fi
 
     say "Silent boot and splash"
+    if rebuild_pending; then bad "the last boot image rebuild failed: do not reboot, run the component again (or: sudo mkinitcpio -P)"; fi
     if silent_configured; then
         if silent_active; then ok "silent boot is active"; else note "silent boot is configured but not active yet: reboot"; fi
         if [[ -e $R/dev/watchdog0 ]] && [[ $(get_setting "$(cmdline_keys "$(boot_method)" | head -n1)") == *nowatchdog* ]]; then
@@ -1103,7 +1200,8 @@ Usage:
   $PROG <component> [options]
 
 Commands:
-  install       Ask about every component, show the plan, then apply it
+  install       Set up the core (lock, autostart, autologin), ask about the
+                extras, show the plan, then apply it
   uninstall     Ask about every installed component, show the plan, then remove it
   status        Quick overview of what is set up (read-only)
   doctor        Full checkup of the whole chain, with problems and notes (read-only)

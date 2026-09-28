@@ -52,6 +52,11 @@ lsl tpm-unlock --undo
 check "undo keeps the recovery key (by design)" grep -qx recovery "$ROOT/stub/slots"
 check "undo removes the TPM key" bash -c "! grep -qx tpm2 '$ROOT/stub/slots'"
 
+section "TPM: tpm2-tss missing"
+new_machine uki; rm "$ROOT/stub/pkg-tpm2-tss"
+a_tpm_tss() { a_tpm && [ -e "$ROOT/stub/pkg-tpm2-tss" ] && has "$LOG" 'MUTATE mkinitcpio -P'; }
+cycle tpm-unlock 'y\nn' '' a_tpm_tss            # installed first, removed again by undo
+
 section "GRUB machine"
 new_machine grub
 a_silent_grub() { has "$ROOT/etc/default/grub" 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 splash quiet rd.udev' && has "$LOG" 'MUTATE grub-mkconfig'; }

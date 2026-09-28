@@ -40,6 +40,7 @@ On tty1, when Hyprland isn't running yet, the login shell clears the screen and 
 
 ### `autologin`
 
+- **Needs `lock` and `autostart`:** if they aren't set up, they are set up first.
 - **`/etc/systemd/system/getty@tty1.service.d/autologin.conf`:** makes `agetty` log you in on tty1 (`--autologin`), without the banner, the login prompt or its line break (`--noissue --skip-login --nonewline`).
 - **Other TTYs are unchanged** and still ask for a password.
 
@@ -60,6 +61,7 @@ On tty1, when Hyprland isn't running yet, the login shell clears the screen and 
 ### `tpm-unlock`
 
 - **Optionally creates a recovery key,** before anything else.
+- **Installs `tpm2-tss`** if it is missing: systemd needs it to use the TPM. Undo removes it again unless another package needs it.
 - **Enrolls the TPM:** `systemd-cryptenroll <disk> --tpm2-device=auto --tpm2-pcrs=7`. PCR 7 holds the Secure Boot state, so the TPM releases the key only when the machine boots with Secure Boot on and the same keys.
 - **Adds `tpm2-device=auto`** to the disk's line in `/etc/crypttab.initramfs`.
 - **`--reenroll`** enrolls a new TPM key and then wipes the old one, in one command (the disk is never left without a TPM key). Use it when the disk asks for its passphrase again after a firmware update.
@@ -101,11 +103,11 @@ What undo does for each setting:
 ## Install and uninstall
 
 - **`install`:**
-  1. asks about each component, with an explanation and a default: yes for `lock`, `autostart`, `autologin`, no for the others,
-  2. skips components that are already set up,
+  1. always includes the core (`lock`, `autostart`, `autologin`). It refuses to start if your login shell isn't fish, bash or zsh, and asks again on an unencrypted disk (no changes nothing),
+  2. asks about each optional extra (`silent-boot`, `splash`, `tpm-unlock`), with an explanation, defaulting to no. Components already set up are skipped,
   3. shows the plan, and the boot warning if a boot component is in it,
   4. asks "Apply?",
   5. applies the components in order. If an optional one refuses, it reports it and goes on.
 - **`uninstall`:**
-  1. asks about each **installed** component,
+  1. asks once about the core (all three together), then about each **installed** extra,
   2. removes autologin **first**, so the machine is never left logging in without the lock.

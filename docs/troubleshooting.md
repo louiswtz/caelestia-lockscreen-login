@@ -28,6 +28,16 @@ This usually happens after a **firmware / BIOS update**, or after changing Secur
 
 If it asks at **every** boot, check that Secure Boot is still on (`bootctl status`) and run `doctor`.
 
+## `mkinitcpio -P` failed
+
+After changing a boot setting, the script rebuilds the boot image with `mkinitcpio -P`. If that fails, the script stops and says so: **don't reboot** until it succeeds, because the settings changed but the boot image doesn't match them yet.
+
+1. Read the lines starting with `==> ERROR` above the script's warning. Lines starting with `==> WARNING: Possibly missing firmware` are normal and harmless.
+2. A common cause is a full EFI partition (boot images are large). Check with `df -h /boot` (or `/efi`), and remove old boot images you no longer use.
+3. Run the same command of the script again: it remembers the failed rebuild and retries it. `doctor` shows a ✗ while a rebuild is still pending.
+
+If your system builds its initramfs with dracut or booster instead of mkinitcpio, `splash` and `tpm-unlock` refuse and change nothing. The script never installs mkinitcpio next to them, because two initramfs builders at once can leave the machine unbootable.
+
 ## The machine doesn't boot after a change
 
 - **"Secure Boot violation" or similar:** a boot file isn't signed.

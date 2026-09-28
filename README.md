@@ -29,11 +29,11 @@ power on → (TPM unlocks the disk) → autologin on tty1 → Hyprland → caele
 - **It has been tested on fake machines** ([testing](docs/testing.md)) and used for real on **one** laptop only. Your setup may differ in ways it doesn't handle.
 - It is provided **as is, without any warranty**. You are responsible for what it does to your system.
 
-> **This only makes sense with full-disk encryption.** With autologin, the lock screen is the only thing between the power button and your session. Without encryption, anyone holding the machine can boot a USB stick or pull the disk and read your files. The script warns you and asks again in that case. Autologin is refused outright without the startup lock and the autostart. See [safety](docs/safety.md).
+> **This only makes sense with full-disk encryption.** With autologin, the lock screen is the only thing between the power button and your session. Without encryption, anyone holding the machine can boot a USB stick or pull the disk and read your files. The script warns you and asks again in that case. Autologin always comes with the startup lock and the autostart: choosing it sets them up too. See [safety](docs/safety.md).
 
 ## What it can set up
 
-Every part is optional and separate. `install` asks about each one, and each can be previewed and undone on its own.
+`lock`, `autostart` and `autologin` are the **core**: `install` always sets them up together. The other three are optional extras that `install` asks about. Every component can also be previewed, applied and undone on its own.
 
 | Component | What it does |
 |---|---|
@@ -63,7 +63,7 @@ Exactly which files each one changes, and how: [how it works](docs/how-it-works.
 git clone https://github.com/louiswtz/caelestia-lockscreen-login.git && cd caelestia-lockscreen-login
 
 ./caelestia-lockscreen-login.sh install --dry-run   # see what would change, change nothing
-./caelestia-lockscreen-login.sh install             # asks about each component, then "Apply?"
+./caelestia-lockscreen-login.sh install             # sets up the core, asks about the extras, then "Apply?"
 ./caelestia-lockscreen-login.sh doctor              # check the whole chain afterwards
 ```
 
@@ -82,7 +82,7 @@ caelestia-lockscreen-login.sh <component> [options]
 
 | Command | What it does | Options |
 |---|---|---|
-| `install` | Asks about every component (explaining each one), shows the plan, then asks "Apply?". Components already set up are skipped. | `--dry-run` |
+| `install` | Always sets up the core (`lock`, `autostart`, `autologin`), asks about each optional extra (explaining each one), shows the plan, then asks "Apply?". Components already set up are skipped. | `--dry-run` |
 | `uninstall` | Asks about every installed component, shows the plan, then asks "Apply?". Autologin is removed first, so the machine is never left logging in unprotected. | `--dry-run` |
 | `status` | Quick overview of what is set up. Read-only. | |
 | `doctor` | Full checkup: login flow, disk encryption, Secure Boot, silent boot and splash, failed services, errors in this boot's log, leftover `.bak` files. Marks each item ✓ fine, **!** note or **✗** problem, and exits with an error if there is any ✗. Read-only. | |

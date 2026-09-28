@@ -25,6 +25,7 @@ new_machine() {
     echo /usr/bin/fish >"$ROOT/stub/shell"
     echo password >"$ROOT/stub/slots"
     touch "$ROOT/stub/sb"                                  # Secure Boot on
+    touch "$ROOT/stub/pkg-tpm2-tss"                        # installed on most systems
     mkdir -p "$ROOT/var/lib/sbctl/keys/db"; touch "$ROOT/var/lib/sbctl/keys/db/db.key"
     mkdir -p "$ROOT/sys/class/tpm/tpm0" "$ROOT/sys/bus/drivers/iTCO_wdt" "$ROOT/sys/class/watchdog/watchdog0/device"
     echo 2 >"$ROOT/sys/class/tpm/tpm0/tpm_version_major"
@@ -69,12 +70,15 @@ echo "MUTATE systemd-cryptenroll $*" >>"$LOG"; enroll=; wipe=
 for a; do case $a in --recovery-key) echo recovery >>"$f" ;; --tpm2-device=*) enroll=1 ;; --wipe-slot=tpm2) wipe=1 ;; esac; done
 [ -n "$wipe" ] && { grep -vx tpm2 "$f" >"$f.t"; cat "$f.t" >"$f"; rm "$f.t"; }
 [ -n "$enroll" ] && echo tpm2 >>"$f"; exit 0'
-    stub pacman 'case $1 in
-  -Q)   [ -e "$ROOT/stub/plymouth" ] ;;
-  -S)   echo "MUTATE pacman $*" >>"$LOG"; touch "$ROOT/stub/plymouth" ;;
-  -Rns) echo "MUTATE pacman $*" >>"$LOG"; rm -f "$ROOT/stub/plymouth" ;;
+    stub pacman 'pkg=$ROOT/stub/pkg-${!#}   # installed packages: stub/pkg-<name>
+case $1 in
+  -Q)   [ -e "$pkg" ] ;;
+  -Qi)  [ -e "$pkg" ] && echo "Required By     : None" ;;
+  -S)   echo "MUTATE pacman $*" >>"$LOG"; touch "$pkg" ;;
+  -Rns) echo "MUTATE pacman $*" >>"$LOG"; rm -f "$pkg" ;;
 esac'
-    stub mkinitcpio 'echo "MUTATE mkinitcpio $*" >>"$LOG"'
+    stub mkinitcpio 'echo "MUTATE mkinitcpio $*" >>"$LOG"
+if [ -e "$ROOT/stub/mkinitcpio-fails" ]; then echo "==> ERROR: No space left on device" >&2; exit 1; fi'
     stub grub-mkconfig 'echo "MUTATE grub-mkconfig $*" >>"$LOG"'
     stub systemctl 'case "$*" in *daemon-reload*) echo "MUTATE systemctl $*" >>"$LOG" ;; esac; exit 0'
     stub journalctl 'exit 0'
@@ -130,6 +134,6 @@ a_autologin() { has "$ROOT/etc/systemd/system/getty@tty1.service.d/autologin.con
 a_silent_uki() { local c; c=$(cat "$ROOT/etc/kernel/cmdline")
     [[ $c == "root=/dev/mapper/root rootflags=subvol=@ rw quiet loglevel=3 rd.udev.log_level=3 systemd.show_status=false rd.systemd.show_status=false vt.global_cursor_default=0 nowatchdog modprobe.blacklist=iTCO_wdt"* ]] \
     && has "$ROOT/boot/loader/loader.conf" '^timeout 0$' && has "$LOG" 'MUTATE mkinitcpio -P' && [ -f "$ROOT/var/lib/caelestia-lockscreen-login/state" ]; }
-a_splash_uki() { [ -e "$ROOT/stub/plymouth" ] && has "$ROOT/etc/mkinitcpio.conf" 'HOOKS=(base systemd plymouth autodetect' && has "$ROOT/etc/kernel/cmdline" ' splash$'; }
+a_splash_uki() { [ -e "$ROOT/stub/pkg-plymouth" ] && has "$ROOT/etc/mkinitcpio.conf" 'HOOKS=(base systemd plymouth autodetect' && has "$ROOT/etc/kernel/cmdline" ' splash$'; }
 a_tpm() { grep -qx tpm2 "$ROOT/stub/slots" && has "$ROOT/etc/crypttab.initramfs" 'discard,tpm2-device=auto' \
     && [ "$(stat -c %a "$ROOT/etc/crypttab.initramfs")" == 600 ]; }

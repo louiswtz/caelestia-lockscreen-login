@@ -26,7 +26,7 @@ With autologin, **the lock screen is your only password**. What protects your da
 ## Safety checks in the script
 
 - **Boot components warn and ask before changing anything.** Run on their own, `silent-boot`, `splash` and `tpm-unlock` (and their `--undo`) show a warning and ask "Continue?". `install` and `uninstall` show it once, next to their "Apply?". Answering no changes nothing.
-- **Autologin needs the startup lock and the autostart.** Without either one, it is refused, with no way to say yes anyway: powering on would give anyone your desktop or a logged-in terminal. This includes a login shell the autostart doesn't support (fish, bash and zsh are). `install` checks again right before enabling autologin, in case the lock or the autostart failed.
+- **Autologin always comes with the startup lock and the autostart.** Without them, powering on would give anyone your desktop or a logged-in terminal, so running `autologin` on its own sets them up too (`install` always sets up all three). If they can't be set up, for example with a login shell the autostart doesn't support (fish, bash and zsh are), autologin is refused, with no way to say yes anyway. `install` checks again right before enabling autologin, in case the lock or the autostart failed.
 - **Autologin on an unencrypted disk** is explained and asked again, defaulting to **no**.
 - **Removing the lock or the autostart while autologin stays on** is refused: remove autologin first.
 - **If Hyprland can't start,** the autostart ends the session instead of leaving a logged-in shell open.

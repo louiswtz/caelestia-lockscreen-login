@@ -28,7 +28,7 @@ A machine is compared before and after with a **snapshot**: every file, folder a
 |---|---|
 | `tests/components.sh` | Every component on a UKI machine, plus `silent-boot`, `splash` and `tpm-unlock` on GRUB and systemd-boot machines. For each: `--dry-run` changes nothing and runs no system command; it applies correctly; applying it again changes nothing; `--undo --dry-run` changes nothing; `--undo` restores the machine **byte for byte**. Also: silent-boot and splash undone in either order, recovery key and `--reenroll` |
 | `tests/safety.sh` | The autologin questions, the lock/autostart removal warnings, the boot warning answered "no", every refusal, undo of setups made by hand |
-| `tests/install.sh` | `install` and `uninstall` (with `--dry-run`, all yes, only Enter), a full install then uninstall back to the exact original, the read-only commands, and `--help` |
+| `tests/install.sh` | `install` and `uninstall` (with `--dry-run`, all yes, only Enter, the core always set up), a full install then uninstall back to the exact original, the read-only commands, and `--help` |
 
 The last check of every run makes sure no real system path was touched anywhere.
 
