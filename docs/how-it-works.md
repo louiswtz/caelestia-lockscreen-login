@@ -9,7 +9,7 @@ power on
  └─ firmware → boot image (Secure Boot checks its signature)
      └─ initramfs: the disk is unlocked (TPM, or passphrase)        tpm-unlock, splash
          └─ systemd: tty1 logs in by itself                          autologin
-             └─ fish login shell starts Hyprland                     autostart
+             └─ login shell (fish, bash, zsh) starts Hyprland        autostart
                  └─ Hyprland starts with every shortcut disabled     lock
                      └─ caelestia shell is up → locked → shortcuts back
                          └─ you type your password on the lock screen
@@ -27,8 +27,15 @@ power on
 
 ### `autostart`
 
-- **`~/.config/fish/conf.d/hyprland.fish`:** when fish is a login shell on tty1 and Hyprland isn't running yet, it clears the screen and runs `exec start-hyprland >/dev/null 2>&1`.
+On tty1, when Hyprland isn't running yet, the login shell clears the screen and runs `exec start-hyprland >/dev/null 2>&1`. Where that goes depends on your login shell:
+
+- **fish:** `~/.config/fish/conf.d/hyprland.fish`.
+- **bash:** a marked block at the **top** of the file bash reads at login: the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists, or a new `~/.bash_profile`. The original is kept as a `.bak`; a file the script created is deleted on undo.
+- **zsh:** the same block at the top of `~/.zprofile` (in `$ZDOTDIR` if you set one).
+
 - **`exec`** means Hyprland replaces the shell: closing Hyprland (or a crash) logs you out instead of leaving a shell open.
+- **If `exec` fails** (Hyprland missing), the shell is ended anyway (`exit 1`, or `kill` in fish), so tty1 never stays logged in.
+- **Undo** removes the autostart from every shell's file, so it still works after a `chsh`.
 - **The output is hidden** because Hyprland keeps its own log in `$XDG_RUNTIME_DIR/hypr/`.
 
 ### `autologin`

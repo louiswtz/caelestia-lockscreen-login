@@ -29,7 +29,7 @@ power on → (TPM unlocks the disk) → autologin on tty1 → Hyprland → caele
 - **It has been tested on fake machines** ([testing](docs/testing.md)) and used for real on **one** laptop only. Your setup may differ in ways it doesn't handle.
 - It is provided **as is, without any warranty**. You are responsible for what it does to your system.
 
-> **This only makes sense with full-disk encryption.** With autologin, the lock screen is the only thing between the power button and your session. Without encryption, anyone holding the machine can boot a USB stick or pull the disk and read your files. The script warns you and asks again in that case. See [safety](docs/safety.md).
+> **This only makes sense with full-disk encryption.** With autologin, the lock screen is the only thing between the power button and your session. Without encryption, anyone holding the machine can boot a USB stick or pull the disk and read your files. The script warns you and asks again in that case. Autologin is refused outright without the startup lock and the autostart. See [safety](docs/safety.md).
 
 ## What it can set up
 
@@ -50,7 +50,7 @@ Exactly which files each one changes, and how: [how it works](docs/how-it-works.
 
 - Arch Linux (`pacman`, `mkinitcpio`, systemd), with the kernel options in a UKI, GRUB or systemd-boot entries
 - Hyprland with a **Lua** config, and the caelestia shell (`caelestia` CLI, `~/.config/caelestia/hypr-user.lua`)
-- `fish` as your login shell for `autostart` (`chsh -s /usr/bin/fish`)
+- `fish`, `bash` or `zsh` as your login shell for `autostart`
 - For `tpm-unlock`:
   - a LUKS2-encrypted root
   - the `sd-encrypt` mkinitcpio hook

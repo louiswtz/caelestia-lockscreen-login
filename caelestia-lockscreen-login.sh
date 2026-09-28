@@ -4,7 +4,7 @@
 # Components (each can be applied, previewed with --dry-run and undone):
 #   lock         Hyprland starts with every shortcut disabled and locks the
 #                caelestia shell as soon as it is up, then gives them back
-#   autostart    logging in on tty1 starts Hyprland (fish), output hidden
+#   autostart    logging in on tty1 starts Hyprland (fish, bash or zsh), output hidden
 #   autologin    tty1 logs in by itself, with no banner or login text
 #   silent-boot  no text at boot and shutdown: quiet kernel options, hardware
 #                watchdog off, systemd-boot menu hidden (hold Space to see it)
@@ -29,8 +29,9 @@
 # Copyright (c) 2026 Louis Schwartz. MIT License, see LICENSE. No warranty.
 #
 # Requirements: Arch Linux (pacman, mkinitcpio), Hyprland with a Lua config +
-# caelestia, fish as login shell (for autostart). Autologin only makes sense
-# with full-disk encryption: the lock screen is then your only password.
+# caelestia, fish, bash or zsh as login shell (for autostart). Autologin only
+# makes sense with full-disk encryption: the lock screen is then your only
+# password. It is refused without the startup lock and the autostart.
 set -euo pipefail
 
 # ------------------------------------------------------------------ settings
@@ -58,6 +59,8 @@ SBCTL_KEYS=("$R/var/lib/sbctl/keys/db/db.key" "$R/usr/share/secureboot/keys/db/d
 
 BEGIN_MARK='-- >>> caelestia-lockscreen-login >>>'
 END_MARK='-- <<< caelestia-lockscreen-login <<<'
+SH_BEGIN_MARK='# >>> caelestia-lockscreen-login >>>'   # bash / zsh login files
+SH_END_MARK='# <<< caelestia-lockscreen-login <<<'
 SILENT_FLAGS=(quiet loglevel=3 rd.udev.log_level=3 systemd.show_status=false
               rd.systemd.show_status=false vt.global_cursor_default=0)
 
@@ -128,7 +131,25 @@ if status is-login; and test (tty) = /dev/tty1; and not set -q WAYLAND_DISPLAY
     # Hyprland keeps its own log in $XDG_RUNTIME_DIR/hypr/; keep the tty blank
     clear
     exec start-hyprland >/dev/null 2>&1
+    # only reached if Hyprland could not start: never leave a logged-in shell
+    # ("exit" in a conf.d file only stops reading the file)
+    kill -KILL $fish_pid
 end
+EOF
+}
+
+sh_block_content() {   # POSIX sh: goes at the top of the bash / zsh login file
+    cat <<EOF
+$SH_BEGIN_MARK
+# Autologin on tty1 -> start Hyprland (it locks itself on startup, see
+# ~/.config/caelestia/hypr-user.lua). Exiting Hyprland logs you out.
+if [ "\$(tty)" = /dev/tty1 ] && [ -z "\${WAYLAND_DISPLAY:-}" ]; then
+    # Hyprland keeps its own log in \$XDG_RUNTIME_DIR/hypr/; keep the tty blank
+    clear
+    exec start-hyprland >/dev/null 2>&1
+    exit 1   # only reached if Hyprland could not start: never leave a logged-in shell
+fi
+$SH_END_MARK
 EOF
 }
 
@@ -160,7 +181,9 @@ getty_conf_content() {
 # Note: with pipefail, "cmd | grep -q" fails whenever cmd itself exits non-zero
 # (bootctl does as a user, /boot being root-only): capture first, then grep.
 
-login_shell_is_fish() { [[ $(getent passwd "$USER_NAME" | cut -d: -f7) == */fish ]]; }
+login_shell()      { getent passwd "$USER_NAME" | cut -d: -f7; }
+login_shell_name() { basename "$(login_shell)"; }
+zdotdir()          { local d; d=$(zsh -c 'print -r -- "${ZDOTDIR:-$HOME}"' 2>/dev/null | tail -n1 || true); echo "${d:-$HOME}"; }
 root_source()      { findmnt -vno SOURCE / 2>/dev/null || true; }   # -v: no btrfs "[/subvol]"
 root_encrypted()   { grep -qx crypt <<<"$(lsblk -sno TYPE "$(root_source)" 2>/dev/null || true)"; }
 root_luks_device() { lsblk -srno PATH,TYPE "$(root_source)" 2>/dev/null | awk 'f{print $1; exit} $2=="crypt"{f=1}' || true; }
@@ -533,8 +556,8 @@ lock_apply() {
 lock_undo() {
     say "Remove the startup lock"
     if autologin_installed && [[ " $GOING " != *" autologin "* ]]; then
-        warn "autologin stays on: without the startup lock, anyone who powers on gets your desktop."
-        ask "   Remove the startup lock anyway?" N || { info "kept"; return 0; }
+        warn "autologin is on: without the startup lock, anyone who powers on gets your desktop."
+        warn "remove autologin first ($PROG autologin --undo): nothing changed"; return 1
     fi
     if lua_has_block; then act "remove the startup block from $HYPR_USER" lua_block_remove
     elif lua_has_legacy_block; then warn "the startup block in $HYPR_USER has no markers: remove its 'Lock on startup' section by hand"
@@ -546,21 +569,91 @@ lock_undo() {
 
 # -------------------------------------------------------------- autostart
 
-autostart_installed() { [[ -f $FISH_CONF ]]; }
+# The file the login shell reads at login (nothing for an unsupported shell).
+# bash reads only the first of .bash_profile, .bash_login and .profile.
+autostart_file() {
+    local f
+    case $(login_shell_name) in
+        fish) echo "$FISH_CONF" ;;
+        bash) for f in .bash_profile .bash_login .profile; do
+                  if [[ -e $HOME/$f ]]; then echo "$HOME/$f"; return 0; fi
+              done
+              echo "$HOME/.bash_profile" ;;
+        zsh)  echo "$(zdotdir)/.zprofile" ;;
+    esac
+    return 0
+}
+
+sh_block_files() {   # every bash / zsh login file the block may be in
+    printf '%s\n' "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" "$(zdotdir)/.zprofile"
+}
+
+sh_has_block() { grep -qsF -e "$SH_BEGIN_MARK" "$1"; }
+
+autostart_installed() {   # for the current login shell
+    local f; f=$(autostart_file)
+    case $f in
+        "")           return 1 ;;
+        "$FISH_CONF") [[ -f $f ]] ;;
+        *)            sh_has_block "$f" ;;
+    esac
+}
+
+autostart_anywhere() {    # in any shell's file (e.g. after a chsh)
+    local f
+    [[ -f $FISH_CONF ]] && return 0
+    while IFS= read -r f; do sh_has_block "$f" && return 0; done < <(sh_block_files)
+    return 1
+}
+
+sh_block_prepend() {   # file: the block first, so it runs before anything else
+    local f=$1 tmp; tmp=$(mktemp)
+    { sh_block_content; if [[ -s $f ]]; then echo; cat "$f"; fi; } >"$tmp"
+    if [[ -e $f ]]; then
+        [[ -e $f.bak ]] || cp -p "$f" "$f.bak"
+        cat "$tmp" >"$f"      # keeps its mode, and a symlink stays a symlink
+    else
+        mkdir -p "$(dirname "$f")"; install -m 644 "$tmp" "$f"
+    fi
+    rm -f "$tmp"
+}
+
+sh_block_remove() {    # the marked block and the blank line added after it
+    local f=$1 tmp; tmp=$(mktemp)
+    awk -v b="$SH_BEGIN_MARK" -v e="$SH_END_MARK" '
+        skip    { if ($0 == e) { skip = 0; gap = 1 } next }
+        $0 == b { skip = 1; next }
+        gap     { gap = 0; if ($0 == "") next }
+        { print }' "$f" >"$tmp"
+    if [[ ! -s $tmp && ! -e $f.bak ]]; then rm -f "$f"   # this script created it
+    else cat "$tmp" >"$f"; fi
+    rm -f "$tmp"
+}
 
 autostart_apply() {
-    say "Autostart"
+    local sh f; sh=$(login_shell_name); f=$(autostart_file)
+    say "Autostart (login shell: $sh)"
     command -v start-hyprland >/dev/null || { warn "start-hyprland not found: nothing changed"; return 1; }
-    login_shell_is_fish || { warn "your login shell is not fish (chsh -s /usr/bin/fish): nothing changed"; return 1; }
-    put_file u "$FISH_CONF" 644 fish_conf_content
+    [[ -n $f ]] || { warn "login shell $sh is not supported (fish, bash or zsh, e.g. chsh -s /usr/bin/bash): nothing changed"; return 1; }
+    if [[ $f == "$FISH_CONF" ]]; then put_file u "$FISH_CONF" 644 fish_conf_content
+    elif sh_has_block "$f"; then info "unchanged: $f"
+    elif [[ -e $f ]]; then act "add the autostart block at the top of $f (keeping a .bak)" sh_block_prepend "$f"
+    else act "create $f with the autostart block" sh_block_prepend "$f"; fi
 }
 
 autostart_undo() {
+    local f
     say "Remove the autostart"
     if autologin_installed && [[ " $GOING " != *" autologin "* ]]; then
-        warn "autologin stays on: without the autostart, anyone who powers on gets a logged-in terminal."
-        ask "   Remove the autostart anyway?" N || { info "kept"; return 0; }
+        warn "autologin is on: without the autostart, anyone who powers on gets a logged-in terminal."
+        warn "remove autologin first ($PROG autologin --undo): nothing changed"; return 1
     fi
+    while IFS= read -r f; do
+        if sh_has_block "$f"; then
+            act "remove the autostart block from $f" sh_block_remove "$f"
+            drop_identical_bak u "$f"
+        fi
+    done < <(sh_block_files)
     remove_file u "$FISH_CONF"
 }
 
@@ -568,14 +661,14 @@ autostart_undo() {
 
 autologin_installed() { [[ -f $GETTY_CONF ]]; }
 
-autologin_safe() {   # explain unsafe combinations; 1 if the user backs out
+autologin_safe() {   # 1 if refused (no lock or no autostart) or the user backs out
     if ! lock_installed && [[ " $COMING " != *" lock "* ]]; then
-        warn "   without the startup lock, anyone who powers on gets your unlocked desktop."
-        ask "   Autologin anyway?" N || return 1
+        warn "   refused: without the startup lock, anyone who powers on gets your unlocked desktop."
+        warn "   set it up first ($PROG lock)"; return 1
     fi
     if ! autostart_installed && [[ " $COMING " != *" autostart "* ]]; then
-        warn "   without the autostart, anyone who powers on gets a logged-in terminal."
-        ask "   Autologin anyway?" N || return 1
+        warn "   refused: without the autostart, anyone who powers on gets a logged-in terminal."
+        warn "   set it up first ($PROG autostart)"; return 1
     fi
     if ! root_encrypted; then
         warn "   the disk is NOT encrypted: anyone with this machine can remove the disk"
@@ -587,7 +680,12 @@ autologin_safe() {   # explain unsafe combinations; 1 if the user backs out
 
 autologin_apply() {  # "checked": install already asked the safety questions
     say "Autologin on tty1"
-    if [[ ${1:-} != checked ]] && ! autologin_safe; then info "nothing changed"; return 0; fi
+    if [[ ${1:-} != checked ]]; then
+        autologin_safe || { info "nothing changed"; return 1; }
+    elif ! ((DRY_RUN)) && ! { lock_installed && autostart_installed; }; then
+        # install asked already, but the lock or the autostart may have failed since
+        warn "the startup lock or the autostart is not set up: autologin refused, nothing changed"; return 1
+    fi
     CHANGED=0
     put_file r "$GETTY_CONF" 644 getty_conf_content
     if ((CHANGED)); then act "reload systemd" sudo systemctl daemon-reload; fi
@@ -818,11 +916,12 @@ cmd_install() {
 
     pick lock "1. Startup lock: Hyprland starts with every shortcut disabled and locks itself
    as soon as the caelestia shell is ready, so the lock screen is your login." Y
-    if login_shell_is_fish; then
-        pick autostart "2. Autostart: logging in on tty1 starts Hyprland, with its output hidden.
-   Closing Hyprland logs you out." Y
+    if [[ -n $(autostart_file) ]]; then
+        pick autostart "2. Autostart: logging in on tty1 starts Hyprland ($(login_shell_name)), with its
+   output hidden. Closing Hyprland logs you out." Y
     else
-        echo; echo "2. Autostart"; warn "   your login shell is not fish (chsh -s /usr/bin/fish): skipped"
+        echo; echo "2. Autostart"
+        warn "   login shell $(login_shell_name) is not supported (fish, bash or zsh): skipped, so autologin is refused too"
     fi
     echo; echo "3. Autologin: tty1 logs you in by itself, with no login text on screen."
     if autologin_installed; then info "already set up"
@@ -845,7 +944,7 @@ cmd_install() {
 
     for c in "${chosen[@]}"; do   # an optional step may refuse: report it and go on
         case $c in
-            autologin) autologin_apply checked ;;
+            autologin) autologin_apply checked || warn "autologin was not set up (see above)" ;;
             tpm-unlock) tpm_apply apply || warn "tpm-unlock was not set up (see above)" ;;
             *) "$(comp_fn "$c")_apply" || warn "$c was not set up (see above)" ;;
         esac
@@ -866,7 +965,7 @@ cmd_uninstall() {
     if autologin_installed && ask "Remove autologin (tty1 asks for your password again)?" Y; then
         chosen+=(autologin); GOING+=" autologin "
     fi
-    if autostart_installed && ask "Remove the autostart (you type start-hyprland yourself)?" Y; then chosen+=(autostart); fi
+    if autostart_anywhere && ask "Remove the autostart (you type start-hyprland yourself)?" Y; then chosen+=(autostart); fi
     if lock_installed && ask "Remove the startup lock?" Y; then chosen+=(lock); fi
     if silent_configured && ask "Undo the silent boot (boot and shutdown text shown again)?" N; then chosen+=(silent-boot); fi
     if splash_installed && ask "Remove the boot splash (Plymouth)?" N; then chosen+=(splash); fi
@@ -914,11 +1013,9 @@ cmd_doctor() {
     if ((lock)); then ok "startup lock (script + Hyprland block)"
     elif ((login)); then bad "autologin WITHOUT the startup lock: your desktop is unlocked at boot ($PROG lock)"
     else note "startup lock not set up"; fi
-    if ((start)); then
-        ok "autostart (fish starts Hyprland)"
-        if login_shell_is_fish; then ok "login shell is fish"
-        else bad "login shell is not fish, so the autostart never runs (chsh -s /usr/bin/fish)"; fi
-    elif ((login)); then bad "autologin WITHOUT the autostart: a logged-in terminal at boot ($PROG autostart)"
+    if ((start)); then ok "autostart ($(login_shell_name) starts Hyprland: $(autostart_file))"
+    elif ((login)); then bad "autologin WITHOUT the autostart for your login shell ($(login_shell_name)): a logged-in terminal at boot ($PROG autostart)"
+    elif autostart_anywhere; then note "autostart is set up for another shell than your login shell ($(login_shell_name)): run $PROG autostart"
     else note "autostart not set up"; fi
     if ((login)); then ok "autologin on tty1"; else note "autologin not set up (tty1 asks for your password)"; fi
     if command -v hyprctl >/dev/null && hyprctl version >/dev/null 2>&1; then
@@ -979,7 +1076,7 @@ cmd_doctor() {
     fi
 
     say "Leftovers"
-    for f in "$HYPR_USER" "$LOCK_SCRIPT" "$FISH_CONF" "$GETTY_CONF" "$KERNEL_CMDLINE" "$MKINITCPIO_CONF" \
+    for f in "$HYPR_USER" "$LOCK_SCRIPT" "$FISH_CONF" $(sh_block_files) "$GETTY_CONF" "$KERNEL_CMDLINE" "$MKINITCPIO_CONF" \
              "$CRYPTTAB_INITRAMFS" "$GRUB_DEFAULT" ${esp_dir:+"$esp_dir/loader/loader.conf"}; do
         if sudo test -e "$f.bak"; then list+=("$f.bak"); fi
     done
@@ -1015,7 +1112,7 @@ Commands:
 Components (each can be applied on its own):
   lock          Hyprland starts with every shortcut disabled and locks the caelestia
                 shell as soon as it is up, then gives the shortcuts back
-  autostart     Logging in on tty1 starts Hyprland (fish), output hidden
+  autostart     Logging in on tty1 starts Hyprland (fish, bash or zsh), output hidden
   autologin     tty1 logs you in by itself, with no banner or login text
   silent-boot   No text at boot and shutdown: quiet kernel options, hardware
                 watchdog off, systemd-boot menu hidden (hold Space to show it)

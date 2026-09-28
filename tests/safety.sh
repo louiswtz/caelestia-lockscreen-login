@@ -5,6 +5,9 @@
 section "Safety questions"
 new_machine uki
 s0=$(snap); lsl autologin < <(answers '' ''); check "autologin alone, defaults: refused (no lock), nothing changed" [ "$(snap)" == "$s0" ]
+lsl autologin < <(answers y y y); check "autologin alone, answering yes: still refused" [ "$(snap)" == "$s0" ]
+lsl lock; s1=$(snap); lsl autologin < <(answers y y y); check "autologin with lock but no autostart: refused" [ "$(snap)" == "$s1" ]
+lsl lock --undo
 lsl lock; lsl autostart; lsl autologin < <(answers)
 check "autologin with lock + autostart: no question, installed" a_autologin
 s1=$(snap); lsl lock --undo < <(answers ''); check "lock --undo while autologin is on, default: kept" [ "$(snap)" == "$s1" ]
@@ -45,5 +48,7 @@ new_machine uki; rm "$ROOT/etc/mkinitcpio.d/linux.preset"; rm -r "$ROOT/boot/loa
 lsl silent-boot; check "silent-boot on an unknown boot setup: refused" [ "$(snap)" == "$s0" ]
 new_machine plain; s0=$(snap)
 lsl tpm-unlock; check "tpm-unlock without encryption/TPM: nothing to do" [ "$(snap)" == "$s0" ]
-new_machine uki; echo /bin/bash >"$ROOT/stub/shell"; s0=$(snap)
-lsl autostart; check "autostart with bash as login shell: refused" [ "$(snap)" == "$s0" ]
+new_machine uki; echo /usr/bin/nu >"$ROOT/stub/shell"; s0=$(snap)
+lsl autostart; check "autostart with an unsupported login shell (nu): refused" [ "$(snap)" == "$s0" ]
+lsl install < <(answers y y y y y y y y y)
+check "install with nu, all yes: no autologin (no autostart possible)" [ ! -e "$ROOT/etc/systemd/system/getty@tty1.service.d/autologin.conf" ]

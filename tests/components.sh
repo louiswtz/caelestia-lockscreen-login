@@ -6,10 +6,35 @@ section "Each component on its own (UKI machine)"
 new_machine uki
 cycle lock       '' '' a_lock
 cycle autostart  '' '' a_autostart
-cycle autologin  'y\ny' '' a_autologin      # alone: confirms "no lock" and "no autostart"
+lsl lock; lsl autostart                     # autologin is refused without them
+cycle autologin  '' '' a_autologin
+lsl autostart --undo; lsl lock --undo
 cycle silent-boot '' '' a_silent_uki
 cycle splash     '' '' a_splash_uki
 cycle tpm-unlock 'y\nn' '' a_tpm          # y = continue, n = no recovery key (so undo can be exact)
+section "Autostart with bash and zsh"
+new_machine uki; echo /bin/bash >"$ROOT/stub/shell"
+printf '[[ -f ~/.bashrc ]] && . ~/.bashrc\n' >"$HOMEDIR/.bash_profile"
+a_bash() { [ "$(head -n1 "$HOMEDIR/.bash_profile")" == '# >>> caelestia-lockscreen-login >>>' ] \
+    && has "$HOMEDIR/.bash_profile" 'exec start-hyprland' && has "$HOMEDIR/.bash_profile" '^\[\[ -f ~/.bashrc' && [ -f "$HOMEDIR/.bash_profile.bak" ]; }
+cycle autostart '' '' a_bash
+new_machine uki; echo /usr/bin/bash >"$ROOT/stub/shell"; echo 'export EDITOR=vim' >"$HOMEDIR/.profile"
+a_profile() { has "$HOMEDIR/.profile" 'exec start-hyprland' && [ ! -e "$HOMEDIR/.bash_profile" ]; }
+cycle autostart '' '' a_profile                # only .profile: bash reads it, so it goes there
+new_machine uki; echo /usr/bin/bash >"$ROOT/stub/shell"
+a_new_bash() { has "$HOMEDIR/.bash_profile" 'exec start-hyprland'; }
+cycle autostart '' '' a_new_bash               # no login file: created, and deleted by undo
+new_machine uki; echo /usr/bin/zsh >"$ROOT/stub/shell"
+a_zsh() { has "$HOMEDIR/.zprofile" 'exec start-hyprland'; }
+cycle autostart '' '' a_zsh
+lsl autostart; echo /usr/bin/fish >"$ROOT/stub/shell"; lsl autostart --undo
+check "undo after a chsh: the old shell's block is removed too" bash -c "[ ! -e '$HOMEDIR/.zprofile' ]"
+new_machine uki; echo /bin/bash >"$ROOT/stub/shell"; s0=$(snap)
+lsl install </dev/null
+check "install with bash, only Enter: autostart and autologin set up" bash -c "$(declare -f a_new_bash a_autologin has); HOMEDIR='$HOMEDIR' ROOT='$ROOT' LOG='$LOG'; a_new_bash && a_autologin"
+lsl uninstall </dev/null
+check "uninstall with bash, only Enter -> original" [ "$(snap)" == "$s0" ]
+
 section "Silent boot + splash share the kernel options: undo in either order"
 new_machine uki; s0=$(snap)
 lsl silent-boot; lsl splash; lsl silent-boot --undo; lsl splash --undo
