@@ -2,13 +2,13 @@
 # Runs the test suite against fake machines. Nothing on the real system changes.
 #
 #   tests/run.sh                    everything
-#   tests/run.sh safety install     only these files (components, safety, install)
+#   tests/run.sh core boot          only these files
 set -uo pipefail
 TESTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 names=("$@")
-((${#names[@]})) || names=(components safety install)
+((${#names[@]})) || names=(core boot)
 for t in "${names[@]}"; do
-    [[ -f $TESTS/$t.sh ]] || { echo "unknown test file: $t (have: components, safety, install)" >&2; exit 2; }
+    [[ -f $TESTS/$t.sh ]] || { echo "unknown test file: $t (have: core, boot)" >&2; exit 2; }
 done
 
 source "$TESTS/lib.sh"   # creates the workspace: only once the names are valid

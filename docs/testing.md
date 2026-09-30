@@ -5,8 +5,8 @@
 The tests run the script against **fake machines**. Nothing on your real system is changed.
 
 ```sh
-tests/run.sh                  # everything
-tests/run.sh safety           # only some files: components, safety, install
+tests/run.sh             # everything
+tests/run.sh boot        # only some files: core, boot
 ```
 
 When everything passes, the fake machines are deleted. When something fails, they are kept, and the path is printed so you can look at them.
@@ -15,9 +15,10 @@ When everything passes, the fake machines are deleted. When something fails, the
 
 Each test builds a machine in a temporary folder:
 
-- **a fake root:** the script's `LSL_ROOT` variable is put in front of every system path it uses (`/etc`, `/boot`, `/var`, `/sys`, `/proc`), with a realistic `mkinitcpio.conf`, `crypttab.initramfs`, `loader.conf`, TPM, watchdog…
-- **a fake home:** with a caelestia `hypr-user.lua`,
-- **stub versions of every system tool:** `sudo`, `bootctl`, `sbctl`, `cryptsetup`, `systemd-cryptenroll`, `pacman`, `mkinitcpio` (which can be made to fail), `grub-mkconfig`, `systemctl`, `journalctl`, `hyprctl`, `caelestia`, `getent` (whose login shell a test can change), `findmnt`, `lsblk`, and `dracut` when a test needs it. They answer like the real ones, keep their state inside the fake root (key slots, installed packages, Secure Boot on/off), and log every call that would change something.
+- **a fake root:** the script's `LSL_ROOT` variable is put in front of every system path it uses (`/etc`, `/boot`, `/var`, `/usr`, `/sys`, `/proc`), with the files of one boot setup: systemd-boot entries, a mkinitcpio / kernel-install / dracut UKI, GRUB the Arch, Debian or Fedora way, Limine with or without `/etc/default/limine`, `sdboot-manage`, or none. It also has a distro `getty@.service` and a hardware watchdog.
+- **a fake home:** with caelestia's `hypr-user.lua` (or `hypr-user.conf`).
+- **stub versions of the system tools:** `sudo`, `bootctl`, `systemctl`, `hyprctl`, `caelestia`, `start-hyprland`, `getent` (whose login shell a test can change), `findmnt`, `lsblk`, and the rebuild command of each boot setup (`mkinitcpio`, `kernel-install`, `dracut`, `update-grub`, `grub2-mkconfig`, `grub-mkconfig`, `sdboot-manage`, `limine-mkinitcpio`). They log every call that would change something.
+- **only those tools:** the real system's boot and desktop tools are hidden from the tests, so a test machine has exactly the tools its setup gives it, whatever the machine running the tests has installed.
 - **a tripwire:** the stub `sudo` refuses, and fails the run, if the script ever passes it a real system path.
 
 A machine is compared before and after with a **snapshot**: every file, folder and link, with its permissions and a hash of its content.
@@ -26,11 +27,10 @@ A machine is compared before and after with a **snapshot**: every file, folder a
 
 | File | Checks |
 |---|---|
-| `tests/components.sh` | Every component on a UKI machine, plus `silent-boot`, `splash` and `tpm-unlock` on GRUB and systemd-boot machines. For each: `--dry-run` changes nothing and runs no system command; it applies correctly; applying it again changes nothing; `--undo --dry-run` changes nothing; `--undo` restores the machine **byte for byte**. Also: the autostart with bash (each login file) and zsh, and after a `chsh`; silent-boot and splash undone in either order; recovery key and `--reenroll`; `tpm2-tss` installed and removed |
-| `tests/safety.sh` | Autologin setting up the lock and autostart first, or refused (unsupported shell); the lock/autostart removal refusals; the boot warning answered "no"; a failing `mkinitcpio` (stops, says not to reboot, retried next run); dracut refusals; every other refusal; undo of setups made by hand |
-| `tests/install.sh` | `install` and `uninstall` (with `--dry-run`, all yes, only Enter, the core always set up, an unencrypted disk answered "no"), a full install then uninstall back to the exact original, the read-only commands, and `--help` |
+| `tests/core.sh` | The login parts with fish, bash (each login file), zsh, dash, after a `chsh`, and without `start-hyprland`; the Lua and classic Hyprland formats; the distro's `agetty` path; every case where install must refuse and change nothing; "no" at "Apply?" and at uninstall; an unencrypted disk |
+| `tests/boot.sh` | Silent boot on every boot setup: the right files and lines change, the right rebuild runs. Uninstall after an edit keeps your changes and removes only its own; a failed rebuild says not to reboot; an unknown setup prints the options to add by hand |
 
-The last check of every run makes sure no real system path was touched anywhere.
+Every setup goes through the full **cycle**: `install --dry-run` changes nothing and runs no system command; `install` applies correctly; `install` again changes nothing and runs nothing; `uninstall --dry-run` changes nothing; `uninstall` restores the machine **byte for byte**; and no real system path was touched.
 
 ## Adding a test
 
@@ -38,12 +38,11 @@ Tests are plain bash, using helpers from `tests/lib.sh`:
 
 ```bash
 section "My new checks"
-new_machine uki                       # uki | grub | sdboot | plain
+new_machine grub-debian               # a boot setup (see the list at the top of new_machine)
 s0=$(snap)                            # snapshot of the whole machine
-lsl splash --dry-run                  # run the script on it
-check "splash --dry-run changes nothing" [ "$(snap)" == "$s0" ]
-lsl tpm-unlock < <(answers y n)       # answers to its questions, in order
-cycle splash '' '' a_splash_uki       # the full dry-run / apply / undo cycle
+lsl install --dry-run < <(printf 'y\ny\n')    # run the script; stdin = its answers
+check "dry run changes nothing" [ "$(snap)" == "$s0" ]
+cycle "my setup" 'y\ny' a_my_assert   # the full install / uninstall cycle
 ```
 
-Add it to one of the three files, or create a new `tests/<name>.sh` and add its name to the default list in `tests/run.sh`.
+Add it to one of the two files, or create a new `tests/<name>.sh` and add its name to the default list in `tests/run.sh`.

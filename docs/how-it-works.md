@@ -6,112 +6,95 @@
 
 ```
 power on
- └─ firmware → boot image (Secure Boot checks its signature)
-     └─ initramfs: the disk is unlocked (TPM, or passphrase)        tpm-unlock, splash
-         └─ systemd: tty1 logs in by itself                          autologin
-             └─ login shell (fish, bash, zsh) starts Hyprland        autostart
-                 └─ Hyprland starts with every shortcut disabled     lock
+ └─ bootloader → kernel                                      (silent boot hides the text)
+     └─ initramfs: the disk is unlocked (your passphrase)
+         └─ systemd: tty1 logs in by itself                  autologin
+             └─ login shell starts Hyprland                  autostart
+                 └─ Hyprland starts with every shortcut off  startup lock
                      └─ caelestia shell is up → locked → shortcuts back
                          └─ you type your password on the lock screen
 ```
 
-`silent-boot` hides all the text along the way.
+## The parts
 
-## The components
+### Startup lock
 
-### `lock`
-
-- **`~/.config/caelestia/lock-on-start.sh`:** a small script that runs when Hyprland starts. It locks the caelestia shell as soon as the shell answers (`caelestia shell lock lock`, retried every 0.1 s for up to 15 s), then gives the shortcuts back (`hyprctl dispatch 'hl.dsp.submap("reset")'`).
-- **A block in `~/.config/caelestia/hypr-user.lua`,** between `-- >>> caelestia-lockscreen-login >>>` and `-- <<< caelestia-lockscreen-login <<<` markers. It defines an empty `startup` submap (a set of shortcuts with nothing in it), switches Hyprland into it at startup, and runs the script above. Until the lock is up, no shortcut works, so nothing can be launched in the second before the lock appears.
+- **`~/.config/caelestia/lock-on-start.sh`:** runs when Hyprland starts. It locks the caelestia shell as soon as the shell answers (`caelestia shell lock lock`, retried every 0.1 s for up to 15 s), then gives the shortcuts back.
+- **A block in caelestia's user config,** between `>>> caelestia-lockscreen-login >>>` and `<<< caelestia-lockscreen-login <<<` markers. It defines an empty `startup` submap (a set of shortcuts with nothing in it), switches Hyprland into it at startup, and runs the script above. Until the lock is up, no shortcut works.
+  - **Lua config** (`hypr-user.lua`, Hyprland 0.56+): the switch happens in the `hyprland.start` event, before anything else runs. The script resets with `hyprctl dispatch 'hl.dsp.submap("reset")'`.
+  - **Classic config** (`hypr-user.conf`): the switch is an `exec-once = hyprctl dispatch submap startup`, a few milliseconds after Hyprland starts. The script resets with `hyprctl dispatch submap reset`.
 - **If locking never succeeds,** the shortcuts stay disabled on purpose. Log in on another TTY (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F2</kbd>) to fix it.
 
-### `autostart`
+### Autostart
 
-On tty1, when Hyprland isn't running yet, the login shell clears the screen and runs `exec start-hyprland >/dev/null 2>&1`. Where that goes depends on your login shell:
+On tty1, when Hyprland isn't running yet, the login shell clears the screen and runs `exec start-hyprland` (or `exec Hyprland` on versions without `start-hyprland`), output hidden. Where that goes depends on your login shell:
 
 - **fish:** `~/.config/fish/conf.d/hyprland.fish`.
-- **bash:** a marked block at the **top** of the file bash reads at login: the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists, or a new `~/.bash_profile`. The original is kept as a `.bak`; a file the script created is deleted on undo.
+- **bash:** a marked block at the **top** of the file bash reads at login: the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists, or a new `~/.bash_profile`.
 - **zsh:** the same block at the top of `~/.zprofile` (in `$ZDOTDIR` if you set one).
+- **sh, dash, ksh…:** the same block at the top of `~/.profile`.
 
 - **`exec`** means Hyprland replaces the shell: closing Hyprland (or a crash) logs you out instead of leaving a shell open.
-- **If `exec` fails** (Hyprland missing), the shell is ended anyway (`exit 1`, or `kill` in fish), so tty1 never stays logged in.
-- **Undo** removes the autostart from every shell's file, so it still works after a `chsh`.
+- **If Hyprland can't start,** the shell is ended anyway (`exit 1`, or `kill` in fish), so tty1 never stays logged in.
+- **Uninstall** removes the block from every shell's file, so it still works after a `chsh`. A file the script created is deleted.
 - **The output is hidden** because Hyprland keeps its own log in `$XDG_RUNTIME_DIR/hypr/`.
 
-### `autologin`
+### Autologin
 
-- **Needs `lock` and `autostart`:** if they aren't set up, they are set up first.
 - **`/etc/systemd/system/getty@tty1.service.d/autologin.conf`:** makes `agetty` log you in on tty1 (`--autologin`), without the banner, the login prompt or its line break (`--noissue --skip-login --nonewline`).
+- **The `agetty` path** is taken from your distro's own `getty@.service` (`/sbin/agetty`, `/usr/bin/agetty`…).
 - **Other TTYs are unchanged** and still ask for a password.
 
-### `silent-boot`
+### Silent boot (optional)
 
-- **Kernel options:** `quiet loglevel=3 rd.udev.log_level=3 systemd.show_status=false rd.systemd.show_status=false vt.global_cursor_default=0`.
+- **Kernel options:** `quiet loglevel=3 rd.udev.log_level=3 systemd.show_status=false rd.systemd.show_status=false vt.global_cursor_default=0`. Options you already have stay; a different value of the same option (e.g. `loglevel=7`) is replaced.
 - **Hardware watchdog:** when the machine has one (e.g. `iTCO_wdt` on Intel, `sp5100_tco` on AMD), it adds `nowatchdog modprobe.blacklist=<driver>`. The watchdog prints a warning at every shutdown that no kernel option can hide.
-- **systemd-boot menu:** set to `timeout 0` in `loader.conf`. Hold <kbd>Space</kbd> at power-on to show it.
-- **Disk password prompts still appear.** They come from a separate system that these options don't hide.
-
-### `splash`
-
-- **Installs `plymouth`** if it is missing.
-- **Adds the `plymouth` hook** to `mkinitcpio.conf`, right after `systemd` (or `udev`). That puts it before the disk unlock, so the password prompt is graphical too.
-- **Adds the `splash` kernel option.**
-- The default theme shows the firmware logo. List the others with `plymouth-set-default-theme -l`.
-
-### `tpm-unlock`
-
-- **Optionally creates a recovery key,** before anything else.
-- **Installs `tpm2-tss`** if it is missing: systemd needs it to use the TPM. Undo removes it again unless another package needs it.
-- **Enrolls the TPM:** `systemd-cryptenroll <disk> --tpm2-device=auto --tpm2-pcrs=7`. PCR 7 holds the Secure Boot state, so the TPM releases the key only when the machine boots with Secure Boot on and the same keys.
-- **Adds `tpm2-device=auto`** to the disk's line in `/etc/crypttab.initramfs`.
-- **`--reenroll`** enrolls a new TPM key and then wipes the old one, in one command (the disk is never left without a TPM key). Use it when the disk asks for its passphrase again after a firmware update.
-
-See [safety.md](safety.md) for when it refuses and why.
+- **Boot menu:** hidden (timeout 0). Hold <kbd>Space</kbd> at power-on to show it (<kbd>Esc</kbd> or <kbd>Shift</kbd> on GRUB).
+- **The disk passphrase prompt still appears.** It comes from a separate system that these options don't hide.
 
 ## Where the kernel options live
 
-The script detects the boot setup and edits the right place:
+Every boot setup keeps them somewhere else. The script edits **every** place it finds, so a machine with several (e.g. UKIs and systemd-boot entries) is covered:
 
-| Setup | Detected by | Kernel options in | Rebuilt with |
-|---|---|---|---|
-| mkinitcpio **UKI** | `/etc/kernel/cmdline` + a `*_uki=` line in `/etc/mkinitcpio.d/*.preset` | `/etc/kernel/cmdline` | `mkinitcpio -P` |
-| **GRUB** | `/etc/default/grub` + `/boot/grub` | `GRUB_CMDLINE_LINUX_DEFAULT` | `grub-mkconfig -o /boot/grub/grub.cfg` |
-| **systemd-boot** entries | `bootctl -p` + `loader/entries/*.conf` | each entry's `options` line | nothing needed |
+| Setup | Found by | Kernel options in | Boot menu | Rebuilt with |
+|---|---|---|---|---|
+| **UKI** (mkinitcpio) | `/etc/kernel/cmdline` + a `*_uki=` preset | `/etc/kernel/cmdline` | `loader.conf` | `mkinitcpio -P` |
+| **UKI** (kernel-install / ukify) | `/etc/kernel/cmdline` + `layout=uki` in `/etc/kernel/install.conf` | `/etc/kernel/cmdline` | `loader.conf` | `kernel-install add-all` |
+| **UKI** (dracut) | `uefi="yes"` in a dracut config | a new file, `/etc/dracut.conf.d/90-caelestia-lockscreen-login.conf` | `loader.conf` | `dracut --regenerate-all --force` |
+| **systemd-boot** entries | `loader/entries/*.conf` on the boot partition | each entry's `options` line (and `/etc/kernel/cmdline`, used for new kernels, if it exists) | `loader.conf` | nothing needed |
+| **systemd-boot** with `sdboot-manage` | `/etc/sdboot-manage.conf` | `LINUX_OPTIONS` (and the entries) | `loader.conf` | `sdboot-manage gen` |
+| **GRUB** | `/etc/default/grub` + a regenerate command | `GRUB_CMDLINE_LINUX_DEFAULT` (and Fedora's per-kernel entries in `/boot/loader/entries`) | `GRUB_TIMEOUT=0`, `GRUB_TIMEOUT_STYLE=hidden` | `update-grub` (Debian, Ubuntu), `grub2-mkconfig` (Fedora, openSUSE) or `grub-mkconfig` (Arch) |
+| **Limine** | `limine.conf` on the boot partition | each entry's `cmdline:` line | `timeout: 0` in `limine.conf` | nothing needed |
+| **Limine** (CachyOS) | `/etc/default/limine` | `KERNEL_CMDLINE[default]` (`limine.conf`'s entries are generated from it) | `timeout: 0` in `limine.conf` | `limine-mkinitcpio` or `limine-update` |
 
-- **Hook or `crypttab` changes** always rebuild the initramfs (`mkinitcpio -P`).
-- **If a rebuild fails** (`mkinitcpio -P` or `grub-mkconfig`), the script stops and says **not** to reboot: the settings changed, but the boot image doesn't match them yet. The failure is recorded (`/var/lib/caelestia-lockscreen-login/rebuild-pending`), so the next run of any boot component retries the rebuild, and `doctor` flags it. See [troubleshooting](troubleshooting.md#mkinitcpio--p-failed).
-- **mkinitcpio only:** on a dracut or booster system, the components that need an initramfs rebuild refuse and change nothing. The script never installs mkinitcpio next to them.
-- **On any other setup,** the boot components change nothing and print the options to add by hand.
-- **With Secure Boot on,** after rebuilding a UKI the script runs `sbctl verify`. If a boot file isn't signed, it tells you **not** to reboot, and how to sign it.
+- **If a rebuild fails,** the script says so and tells you **not** to reboot: the settings changed, but the boot files don't match them yet. See [troubleshooting](troubleshooting.md#a-boot-rebuild-failed).
+- **With Secure Boot on and `sbctl`,** it checks afterwards that the rebuilt images are signed, and tells you to sign them if not.
+- **On any other setup,** silent boot changes nothing and prints the options to add by hand.
 
-## Dry run and undo
+## Dry run and uninstall
 
-- **`--dry-run` changes nothing and runs no system command.** It only lists what would happen, and works for every component, their `--undo`, `install` and `uninstall`.
-- **Every edited system file keeps a `.bak`** of its original, made before its first change.
-- **Each original value is recorded** in `/var/lib/caelestia-lockscreen-login/state`, one line per changed setting.
-- **Undo puts the originals back, then deletes the `.bak` files** that became identical again, and forgets the record.
-- **Undo never removes a disk recovery key.** You may have written it down, and it keeps working.
-- **Packages the script installed are removed by undo:** Plymouth for `splash` (after removing the hook and rebuilding), `tpm2-tss` for `tpm-unlock` (unless another package needs it).
+- **`--dry-run` changes nothing and runs no system command.** It lists what would happen, including the exact lines each boot file would get.
+- **Before its first change to a boot file,** the script saves the original in `/var/lib/caelestia-lockscreen-login/` (and lists it in `files` there).
+- **Uninstall, for each of those files:**
 
-What undo does for each setting:
-
-| Situation | What undo does |
+| Situation | What uninstall does |
 |---|---|
-| Recorded, and unchanged since | Puts the original value back **exactly** |
-| Recorded, but changed by hand since | Removes only this script's part, keeps your changes (and says so) |
-| The component has a record, but not this setting | Leaves it alone: this script never changed it |
-| Nothing recorded (a setup made by hand) | Removes only the options this script would add |
+| Unchanged since install | Puts the original back **exactly** |
+| You edited it since | Removes only what this script added: its options, and its boot menu settings if you didn't change them. A value it replaced (e.g. `loglevel=7`) comes back. Your own edits stay, and it says so. |
 
-## Install and uninstall
+- **Then it forgets the saved originals,** and rebuilds the boot files the same way install did.
+- **User files** (the Hyprland config, shell login files) only ever get a marked block, which uninstall removes along with the blank line next to it. Files the script created entirely are deleted.
+
+## Install and uninstall, step by step
 
 - **`install`:**
-  1. always includes the core (`lock`, `autostart`, `autologin`). It refuses to start if your login shell isn't fish, bash or zsh, and asks again on an unencrypted disk (no changes nothing),
-  2. asks about each optional extra (`silent-boot`, `splash`, `tpm-unlock`), with an explanation, defaulting to no. Components already set up are skipped,
-  3. shows the plan, and the boot warning if a boot component is in it,
-  4. asks "Apply?",
-  5. applies the components in order. If an optional one refuses, it reports it and goes on. If a boot image rebuild fails, it stops there and says not to reboot.
-  6. right before autologin, checks that the lock and the autostart really got set up, and refuses autologin otherwise.
+  1. checks that the machine can use it: caelestia and Hyprland installed, caelestia's user config present, a supported login shell, no display manager enabled. Otherwise it lists what's missing and stops, changing nothing,
+  2. on an unencrypted disk, explains the risk and asks, defaulting to **no**,
+  3. asks whether to add silent boot, defaulting to no,
+  4. shows the plan, and asks "Apply?",
+  5. sets up the startup lock, then the autostart, then autologin **last**, so autologin never exists without the other two,
+  6. then silent boot, and the boot rebuild.
 - **`uninstall`:**
-  1. asks once about the core (all three together), then about each **installed** extra,
+  1. shows the plan, and asks "Apply?",
   2. removes autologin **first**, so the machine is never left logging in without the lock,
-  3. like `install`, stops if a boot image rebuild fails.
+  3. then the autostart, the startup lock and silent boot.

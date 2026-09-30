@@ -1,6 +1,6 @@
 # Security policy
 
-This project changes how a machine boots, logs in and unlocks its disk, so security problems matter here.
+This project changes how a machine logs in, and optionally how it boots, so security problems matter here.
 
 ## Reporting a vulnerability
 
@@ -16,10 +16,10 @@ The report is visible only to the maintainer until a fix is published. You'll ge
 For example:
 
 - Something can be launched, or the session reached, **before the lock screen appears**.
-- The disk can be unlocked, or its key obtained, in a situation where `tpm-unlock` should have refused (e.g. Secure Boot off).
-- A safety check or refusal can be bypassed: autologin set up without its warnings, or `tpm-unlock` enrolled without Secure Boot.
+- A safety check or refusal can be bypassed: autologin set up without the startup lock or the autostart, or without the unencrypted-disk warning.
+- Uninstall leaves autologin on while removing the lock or the autostart.
 - The script writes somewhere it shouldn't, weakens file permissions, or leaves secrets readable.
-- `--dry-run` changes something, or `--undo` leaves a weaker configuration than the original.
+- `--dry-run` changes something, or `uninstall` leaves a weaker configuration than the original.
 
 Bugs without a security impact (a wrong message, a failed install on an unsupported setup…) can go in a normal issue.
 

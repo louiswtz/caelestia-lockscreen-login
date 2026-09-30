@@ -4,49 +4,27 @@
 
 ## The security model
 
-With autologin, **the lock screen is your only password**. What protects your data then depends on the rest of the machine:
+With autologin, **the lock screen is the only password between a running machine and your session.** What protects your data when the machine is off depends on disk encryption:
 
-| Someone who has your machine… | Without disk encryption | With encryption (passphrase at boot) | With encryption + TPM + Secure Boot |
-|---|---|---|---|
-| powers it on | Reaches your lock screen | Is stopped at the disk passphrase | Reaches your lock screen, with the disk unlocked |
-| boots their own USB stick | **Reads all your files** | Sees only encrypted data | Sees only encrypted data (the TPM refuses the key) |
-| pulls the disk out | **Reads all your files** | Sees only encrypted data | Sees only encrypted data (the key stays in the TPM) |
-| turns Secure Boot off | n/a | n/a | The TPM refuses the key, and the disk asks for its passphrase |
+| Someone who has your machine… | Without disk encryption | With disk encryption |
+|---|---|---|
+| powers it on | Reaches your lock screen | Is stopped at the disk passphrase |
+| boots their own USB stick | **Reads all your files** | Sees only encrypted data |
+| pulls the disk out | **Reads all your files** | Sees only encrypted data |
+| finds it running, locked | Is stopped at the lock screen | Is stopped at the lock screen |
 
-- **Autologin without disk encryption is not safe,** so the script warns and asks again in that case.
-- **With `tpm-unlock`,** the lock screen is what stands between a powered-on machine and your session. Use a strong password.
-- **The `lock` component matters for that reason:** no shortcut works until the lock is up.
-
-### What TPM + Secure Boot does not cover
-
-- **Hardware attacks,** like reading the TPM's signals off the motherboard or freezing the RAM (cold boot). They need lab-level skills.
-- **Firmware settings:** set a **firmware (BIOS/UEFI) administrator password** so nobody can change Secure Boot or the boot order. Only the administrator one: a power-on password would add a prompt before the lock screen.
-- **The boot menu editor:** keep `editor no` in systemd-boot's `loader.conf`, so nobody can edit kernel options at boot. `doctor` checks this.
+- **Autologin without disk encryption is not safe,** so the script explains the risk and asks again in that case, defaulting to no.
+- **The startup lock matters for that reason:** no shortcut works until the lock is up, so nothing can be launched in the moment between Hyprland starting and the lock appearing.
+- **Set a firmware (BIOS/UEFI) administrator password** so nobody can change the boot order to start their own system. Only the administrator one: a power-on password would add a prompt before the disk passphrase.
+- **Keep the boot menu editor off:** `editor no` in systemd-boot's `loader.conf`, or a GRUB password. Otherwise someone at the boot menu could add kernel options, for example to get a root shell.
 
 ## Safety checks in the script
 
-- **Boot components warn and ask before changing anything.** Run on their own, `silent-boot`, `splash` and `tpm-unlock` (and their `--undo`) show a warning and ask "Continue?". `install` and `uninstall` show it once, next to their "Apply?". Answering no changes nothing.
-- **Autologin always comes with the startup lock and the autostart.** Without them, powering on would give anyone your desktop or a logged-in terminal, so running `autologin` on its own sets them up too (`install` always sets up all three). If they can't be set up, for example with a login shell the autostart doesn't support (fish, bash and zsh are), autologin is refused, with no way to say yes anyway. `install` checks again right before enabling autologin, in case the lock or the autostart failed.
-- **Autologin on an unencrypted disk** is explained and asked again, defaulting to **no**.
-- **Removing the lock or the autostart while autologin stays on** is refused: remove autologin first.
+- **Install checks everything first and stops before changing anything** if the machine can't use it: caelestia or Hyprland missing, no caelestia user config, an unsupported login shell (the autostart couldn't be set up, and autologin would then leave a logged-in terminal), or an enabled display manager.
+- **Autologin always comes with the startup lock and the autostart,** and is set up **last**. If anything before it fails, the script stops and autologin is never enabled.
 - **If Hyprland can't start,** the autostart ends the session instead of leaving a logged-in shell open.
-- **`uninstall` removes autologin first,** so the machine is never left logging in without the lock.
-- **A failed boot image rebuild stops everything.** If `mkinitcpio -P` or `grub-mkconfig` fails, the script says so and tells you not to reboot, instead of reporting success. The next run retries the rebuild.
-- **With Secure Boot on,** every rebuilt boot image is checked with `sbctl verify`. An unsigned image won't boot, so the script tells you not to reboot.
-
-## When `tpm-unlock` refuses
-
-It refuses whenever automatic unlock would quietly make the encryption useless:
-
-| Situation | What it does | Why |
-|---|---|---|
-| Secure Boot off | **Refuses** | Anyone could boot their own system and ask the TPM for the key |
-| Old `encrypt` mkinitcpio hook | **Refuses** | It can't use the TPM. Switch to the systemd hooks (`systemd … sd-vconsole … sd-encrypt`) first |
-| Disk is not LUKS2 | **Refuses** | TPM enrolment needs LUKS2 |
-| Initramfs built by dracut or booster | **Refuses** | The script only knows how to set up mkinitcpio's `sd-encrypt` |
-| No TPM 2.0 chip, or no encryption | Does nothing | Not possible, or nothing to unlock |
-| Secure Boot with only factory keys | **Asks first** | Another Microsoft-signed Linux (a live USB) could boot and get the key. Use your own keys (`sbctl`) |
-| Boot image is not a signed UKI | **Asks first** | The initramfs isn't covered by Secure Boot, so someone could replace it and read the key when the TPM releases it |
-| No recovery key yet | **Offers to create one** | It's your way in if the TPM ever refuses and you forget the passphrase |
-
-`tpm-unlock --undo` refuses to remove the TPM key if it is the only way left to unlock the disk.
+- **Uninstall removes autologin first,** so the machine is never left logging in without the lock.
+- **Silent boot is optional and off by default.** The plan shows the exact lines it will change in each boot file before you say "Apply?".
+- **A failed boot rebuild is reported, never hidden.** The script says which command failed and tells you not to reboot until it succeeds.
+- **With Secure Boot on,** rebuilt boot images are checked with `sbctl verify` (when `sbctl` is installed). An unsigned image won't boot, so the script tells you to sign it before rebooting.
+- **Dry runs change nothing and run no system command,** and the test suite checks that for every setup.

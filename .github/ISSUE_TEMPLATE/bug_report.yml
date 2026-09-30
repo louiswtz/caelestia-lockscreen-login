@@ -23,9 +23,9 @@ body:
     validations:
       required: true
   - type: textarea
-    id: doctor
+    id: status
     attributes:
-      label: Output of `./caelestia-lockscreen-login.sh doctor`
+      label: Output of `./caelestia-lockscreen-login.sh status`
       render: shell
     validations:
       required: true
@@ -34,21 +34,31 @@ body:
     attributes:
       label: Boot setup
       options:
-        - mkinitcpio UKI (/etc/kernel/cmdline)
-        - systemd-boot entries (no UKI)
+        - systemd-boot entries
+        - systemd-boot with sdboot-manage
+        - UKI (mkinitcpio)
+        - UKI (kernel-install / ukify)
+        - UKI (dracut)
         - GRUB
+        - Limine
+        - Limine with /etc/default/limine (CachyOS)
         - Other / not sure
     validations:
       required: true
-  - type: dropdown
-    id: initramfs
+  - type: input
+    id: distro
     attributes:
-      label: What builds the initramfs
+      label: Distro
+      placeholder: Arch Linux, Fedora 42, Ubuntu 26.04…
+    validations:
+      required: true
+  - type: dropdown
+    id: hyprconfig
+    attributes:
+      label: caelestia user config
       options:
-        - mkinitcpio
-        - dracut
-        - booster
-        - Not sure
+        - hypr-user.lua (Lua)
+        - hypr-user.conf (classic)
     validations:
       required: true
   - type: input
@@ -64,7 +74,7 @@ body:
       options:
         - label: The disk is encrypted (LUKS)
         - label: Secure Boot is on
-        - label: TPM unlock (`tpm-unlock`) is set up
+        - label: Silent boot is set up
   - type: input
     id: version
     attributes:

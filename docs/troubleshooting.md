@@ -2,67 +2,50 @@
 
 [← README](../README.md)
 
-Start with the checkup. It is read-only:
+Start with the status. It is read-only and needs no password:
 
 ```sh
-./caelestia-lockscreen-login.sh doctor
+./caelestia-lockscreen-login.sh status
 ```
-
-It marks each item ✓ fine, **!** a note, or **✗** a problem, and says what to run for each problem.
 
 ## The lock screen doesn't appear at startup
 
 The shortcuts stay disabled on purpose, so nothing can be launched without the lock.
 
 1. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F2</kbd> and log in there.
-2. Run `./caelestia-lockscreen-login.sh doctor`.
-3. Check that the caelestia shell starts (`caelestia shell -l` shows its log), and that `caelestia shell lock lock` works.
-4. To go back to a normal login while you investigate: `./caelestia-lockscreen-login.sh autologin --undo`.
+2. Check that the caelestia shell starts (`caelestia shell -l` shows its log), and that `caelestia shell lock lock` works.
+3. Check Hyprland's config: `hyprctl configerrors`.
+4. To go back to a normal login while you investigate: `./caelestia-lockscreen-login.sh uninstall`.
 
-## The disk asks for its passphrase again
+## Hyprland doesn't start (tty1 flickers or stays blank)
 
-This usually happens after a **firmware / BIOS update**, or after changing Secure Boot settings, because the TPM only releases the key for the exact Secure Boot state it was enrolled with.
+The autostart logs you out when Hyprland can't start, and autologin then logs you straight back in to retry, so tty1 may flicker. Log in on tty2 (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F2</kbd>) and look at Hyprland's last log in `$XDG_RUNTIME_DIR/hypr/`, or run `start-hyprland` (or `Hyprland`) from there to see the error.
 
-1. Type your passphrase or recovery key (the recovery key types the same on AZERTY and QWERTY).
-2. Once logged in: `./caelestia-lockscreen-login.sh tpm-unlock --reenroll`.
+## A boot rebuild failed
 
-If it asks at **every** boot, check that Secure Boot is still on (`bootctl status`) and run `doctor`.
+After changing the kernel options, the script rebuilds the boot files (`mkinitcpio -P`, `update-grub`, `dracut --regenerate-all --force`…). If that fails, it says so: **don't reboot** until it succeeds, because the settings changed but the boot files don't match them yet.
 
-## `mkinitcpio -P` failed
+1. Read the error above the script's warning. mkinitcpio's `==> WARNING: Possibly missing firmware` lines are normal and harmless.
+2. A common cause is a full boot partition (boot images are large). Check with `df -h /boot` (or `/efi`), and remove old images you no longer use.
+3. Run the command the script printed yourself, with `sudo`, until it succeeds.
 
-After changing a boot setting, the script rebuilds the boot image with `mkinitcpio -P`. If that fails, the script stops and says so: **don't reboot** until it succeeds, because the settings changed but the boot image doesn't match them yet.
+## The machine doesn't boot after silent boot
 
-1. Read the lines starting with `==> ERROR` above the script's warning. Lines starting with `==> WARNING: Possibly missing firmware` are normal and harmless.
-2. A common cause is a full EFI partition (boot images are large). Check with `df -h /boot` (or `/efi`), and remove old boot images you no longer use.
-3. Run the same command of the script again: it remembers the failed rebuild and retries it. `doctor` shows a ✗ while a rebuild is still pending.
-
-If your system builds its initramfs with dracut or booster instead of mkinitcpio, `splash` and `tpm-unlock` refuse and change nothing. The script never installs mkinitcpio next to them, because two initramfs builders at once can leave the machine unbootable.
-
-## The machine doesn't boot after a change
-
-- **"Secure Boot violation" or similar:** a boot file isn't signed.
+- **"Secure Boot violation" or similar:** a rebuilt image isn't signed.
   1. Turn Secure Boot off in the firmware, and boot.
-  2. Run `sudo sbctl verify`, then `sudo sbctl sign -s <file>` for each unsigned `.efi`.
+  2. Sign the images (with `sbctl`: `sudo sbctl verify`, then `sudo sbctl sign -s <file>` for each unsigned `.efi`).
   3. Turn Secure Boot back on.
-- **It stops before the lock screen:** boot a USB stick (see below), unlock and mount the disk, and put the `.bak` files back. Every file the script edits keeps its original as `<file>.bak`, e.g. `/etc/kernel/cmdline.bak`. Then rebuild with `mkinitcpio -P` from an `arch-chroot`.
-
-## Using a rescue USB stick with TPM unlock on
-
-With your own Secure Boot keys, an ordinary USB stick won't boot.
-
-1. Turn Secure Boot **off** in the firmware.
-2. Boot the stick. Your disk will ask for its passphrase or recovery key, since the TPM refuses without Secure Boot.
-3. Turn Secure Boot back **on** afterwards.
+- **It stops somewhere else:** show the boot menu (hold <kbd>Space</kbd>, or <kbd>Esc</kbd>/<kbd>Shift</kbd> on GRUB) and pick a fallback or older entry, or boot a USB stick, mount your system, and put the originals back from `/var/lib/caelestia-lockscreen-login/`. The `files` list there says which saved file is which. Then rebuild the boot files from a chroot.
 
 ## Silent boot hides an error
 
-With `silent-boot`, errors no longer appear on screen at boot. List those of the current boot with:
+With silent boot, errors no longer appear on screen at boot. List those of the current boot with:
 
 ```sh
 journalctl -b -p 3
 ```
 
-`doctor` also shows the most frequent ones. Many are harmless.
+Many are harmless.
 
 ## Removing everything
 
@@ -71,4 +54,4 @@ journalctl -b -p 3
 ./caelestia-lockscreen-login.sh uninstall
 ```
 
-Afterwards, `doctor` lists any `.bak` files left behind. They are safe to delete once everything works.
+If you used v1.0.0's `splash` or `tpm-unlock`, see [coming from v1.0.0](../README.md#coming-from-v100).
